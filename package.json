@@ -1,0 +1,27 @@
+{
+  "name": "multimodel-management",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
+  "bin": {
+    "mm": "packages/daemon/bin/mm.js"
+  },
+  "scripts": {
+    "serve": "node packages/daemon/src/cli.ts serve",
+    "usage": "node packages/daemon/src/cli.ts usage",
+    "test": "node --test packages/*/test/*.test.ts"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "dependencies": {
+    "@lydell/node-pty": "^1.2.0-beta.15",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
+    "dompurify": "^3.4.16",
+    "marked": "^18.1.0",
+    "ws": "^8.22.0"
+  }
+}

@@ -1,0 +1,5 @@
+{
+  "name": "@mm/daemon",
+  "private": true,
+  "type": "module"
+}

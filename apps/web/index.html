@@ -1,0 +1,252 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0d0f12">
+  <title>mm workspace</title>
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/vendor/xterm.css">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header class="top">
+    <button class="icon-btn only-mobile" id="menu-btn" aria-label="Menu">☰</button>
+    <div class="brand"><span class="logo">mm</span><span class="brand-name">workspace</span></div>
+    <nav class="views" id="views">
+      <button data-view="workspace" class="active">Workspace</button>
+      <button data-view="research">Research</button>
+      <button data-view="learn">Learn</button>
+      <button data-view="memory">Memory</button>
+      <button data-view="usage">Usage</button>
+    </nav>
+    <div class="top-right">
+      <a id="project-remote" class="remote-badge" target="_blank" rel="noopener" hidden></a>
+      <select id="project" title="Project folder"></select>
+      <button id="project-add" title="Add project folder">📁 Add</button>
+      <span id="conn" class="dot" title="connection"></span>
+    </div>
+  </header>
+
+  <!-- WORKSPACE -->
+  <section class="view active" id="view-workspace">
+    <aside class="side" id="side">
+      <form id="new-task" class="card">
+        <div class="card-title">New task</div>
+        <textarea id="nt-prompt" rows="4" placeholder="What should an agent do? e.g. Fix the login crash on refresh"></textarea>
+        <div class="row">
+          <select id="nt-agent">
+            <option value="auto">Auto (router decides)</option>
+            <option value="claude">Claude Code</option>
+            <option value="codex">Codex</option>
+            <option value="opencode">OpenCode</option>
+            <option value="shell">Shell</option>
+          </select>
+          <input id="nt-model" placeholder="model (optional)">
+        </div>
+        <div class="row small">
+          <label><input type="checkbox" id="nt-isolate" checked> own worktree</label>
+          <label title="Claude: load only the mm memory MCP server (much smaller context)"><input type="checkbox" id="nt-lean" checked> lean</label>
+        </div>
+        <div id="nt-route" class="route-hint"></div>
+        <button class="primary" type="submit">Start</button>
+      </form>
+      <div id="board"></div>
+    </aside>
+
+    <main class="ws-main">
+      <div class="tabs" id="tabs"></div>
+      <div class="panes" id="panes"><div class="empty-state" id="ws-empty">
+        <h2>No task open</h2>
+        <p>Describe a task on the left. The router picks the agent and model, gives it its own git worktree and shared memory.</p>
+      </div></div>
+      <div class="keybar" id="keybar">
+        <button data-key="\r">Enter</button><button data-key="y">y</button><button data-key="n">n</button>
+        <button data-key="\x1b">Esc</button><button data-key="\x03">Ctrl+C</button>
+        <button data-key="\x1b[A">↑</button><button data-key="\x1b[B">↓</button><button data-key="\t">Tab</button>
+        <button id="kb-type">Type…</button>
+      </div>
+    </main>
+
+    <aside class="right" id="right">
+      <div class="subtabs" id="right-tabs">
+        <button data-tab="info" class="active">Info</button>
+        <button data-tab="diff">Diff</button>
+        <button data-tab="preview">Preview</button>
+      </div>
+      <div class="right-body">
+        <div data-pane="info" class="active" id="info"><p class="muted">Select a task.</p></div>
+        <div data-pane="diff" id="diff"><p class="muted">Select a task to see its changes.</p></div>
+        <div data-pane="preview" id="preview">
+          <div class="row"><input id="pv-port" type="number" placeholder="dev server port, e.g. 5173"><button id="pv-go">Open</button></div>
+          <p class="muted small">Proxies a dev server on this machine so you can view the build from your phone.</p>
+          <iframe id="pv-frame" title="preview"></iframe>
+        </div>
+      </div>
+    </aside>
+  </section>
+
+  <!-- RESEARCH -->
+  <section class="view" id="view-research">
+    <aside class="side">
+      <button class="primary" id="rs-new">New thread</button>
+      <div class="card-title">Threads</div>
+      <div id="rs-threads" class="list"></div>
+      <div class="card-title">Spaces</div>
+      <div id="rs-collections" class="list"></div>
+    </aside>
+    <main class="doc-main">
+      <div class="subtabs" id="rs-mode">
+        <button data-mode="answer" class="active">Answers</button>
+        <button data-mode="papers">Papers</button>
+      </div>
+      <div id="rs-answer-mode">
+        <form id="rs-form" class="ask">
+          <textarea id="rs-q" rows="2" placeholder="Ask anything — answers come with sources"></textarea>
+          <div class="row">
+            <select id="rs-focus"><option value="web">Web</option><option value="academic">Academic</option><option value="code">Code</option></select>
+            <label class="small"><input type="checkbox" id="rs-deep"> Deep research</label>
+            <span class="grow"></span>
+            <span id="rs-info" class="muted small"></span>
+            <button class="primary" type="submit">Ask</button>
+          </div>
+        </form>
+        <div id="rs-thread"></div>
+      </div>
+      <div id="rs-papers-mode" hidden>
+        <form id="pp-form" class="ask">
+          <div class="row">
+            <input id="pp-q" class="grow" placeholder="Search 250M+ papers (OpenAlex), e.g. does creatine improve memory">
+            <button class="primary" type="submit">Search</button>
+          </div>
+          <div class="row small">
+            <button type="button" id="pp-meter">Consensus meter</button>
+            <button type="button" id="pp-bib">Export BibTeX</button>
+            <button type="button" id="pp-ris">Export RIS</button>
+            <button type="button" id="pp-csv">Export CSV</button>
+            <button type="button" id="pp-save">Save to space</button>
+            <span class="muted">Tick papers to export or judge.</span>
+          </div>
+        </form>
+        <div id="pp-meter-out"></div>
+        <div id="pp-results"></div>
+      </div>
+    </main>
+  </section>
+
+  <!-- LEARN -->
+  <section class="view" id="view-learn">
+    <aside class="side">
+      <form id="ln-ingest" class="card">
+        <div class="card-title">Add documents</div>
+        <input id="ln-path" placeholder="File or folder path (md, txt, html, code, pdf*)">
+        <button type="submit">Ingest</button>
+        <div id="ln-ingest-out" class="small muted"></div>
+      </form>
+      <div class="card-title">Your documents</div>
+      <div id="ln-docs" class="list"></div>
+    </aside>
+    <main class="doc-main">
+      <div class="subtabs" id="ln-mode">
+        <button data-mode="chat" class="active">Chat with docs</button>
+        <button data-mode="solve">Solve</button>
+        <button data-mode="quiz">Quiz</button>
+        <button data-mode="bank">Question bank</button>
+      </div>
+      <div data-lmode="chat" class="lmode active">
+        <div id="ln-chat" class="chat"></div>
+        <form id="ln-chat-form" class="ask"><div class="row"><input id="ln-chat-q" class="grow" placeholder="Ask about your documents"><button class="primary">Ask</button></div></form>
+      </div>
+      <div data-lmode="solve" class="lmode">
+        <form id="ln-solve-form" class="ask">
+          <textarea id="ln-problem" rows="4" placeholder="Paste a problem — get a numbered, checked solution"></textarea>
+          <div class="row"><label class="small"><input type="checkbox" id="ln-usedocs" checked> use my documents</label><span class="grow"></span><button class="primary">Solve</button></div>
+        </form>
+        <div id="ln-solve-out" class="md"></div>
+      </div>
+      <div data-lmode="quiz" class="lmode">
+        <form id="ln-quiz-form" class="ask"><div class="row">
+          <input id="ln-topic" class="grow" placeholder="Topic (uses your documents when they match)">
+          <select id="ln-n"><option>3</option><option selected>5</option><option>10</option></select>
+          <select id="ln-diff"><option>easy</option><option selected>medium</option><option>hard</option></select>
+          <button class="primary">Make quiz</button>
+        </div></form>
+        <div id="ln-quiz"></div>
+      </div>
+      <div data-lmode="bank" class="lmode"><div id="ln-bank"></div></div>
+    </main>
+  </section>
+
+  <!-- MEMORY -->
+  <section class="view" id="view-memory">
+    <aside class="side">
+      <div class="card">
+        <div class="card-title">Project memory</div>
+        <div id="mem-stats" class="small"></div>
+        <button id="mem-index">Re-index project</button>
+      </div>
+      <form id="mem-add" class="card">
+        <div class="card-title">Add to memory</div>
+        <select id="mem-kind"><option>decision</option><option>note</option><option>bug</option><option>todo</option></select>
+        <input id="mem-title" placeholder="Title">
+        <textarea id="mem-body" rows="3" placeholder="Why / details"></textarea>
+        <button>Save</button>
+      </form>
+    </aside>
+    <main class="doc-main">
+      <form id="mem-search" class="ask"><div class="row"><input id="mem-q" class="grow" placeholder="Search everything agents know: files, symbols, decisions, research…"><button class="primary">Search</button></div></form>
+      <div class="subtabs" id="mem-mode">
+        <button data-mode="recent" class="active">Recent</button>
+        <button data-mode="results">Results</button>
+        <button data-mode="tree">Tree</button>
+        <button data-mode="context">Agent context</button>
+      </div>
+      <div id="mem-out"></div>
+    </main>
+  </section>
+
+  <!-- USAGE -->
+  <section class="view" id="view-usage">
+    <main class="doc-main wide">
+      <div class="row"><h2 class="grow">Usage</h2>
+        <select id="us-hours"><option value="1">1h</option><option value="24" selected>24h</option><option value="168">7d</option><option value="720">30d</option></select>
+      </div>
+      <p class="muted small">Cost is real spend for <b>api_key</b> rows. For <b>subscription</b> rows it is what the same calls would cost at API prices.</p>
+      <div id="us-summary"></div>
+      <h3>By task</h3>
+      <div id="us-tasks"></div>
+    </main>
+  </section>
+
+  <dialog id="pick">
+    <form method="dialog" id="pick-form" class="card">
+      <div class="card-title">Clone from GitHub</div>
+      <div class="row">
+        <input id="clone-url" class="grow" placeholder="https://github.com/owner/repo  or  git@github.com:owner/repo.git" spellcheck="false">
+        <button type="button" class="primary" id="clone-go">Clone</button>
+      </div>
+      <div id="clone-note" class="muted small"></div>
+      <div class="card-title">Or pick a folder on this computer</div>
+      <div class="row">
+        <button type="button" id="pick-up" title="Up one folder">↑</button>
+        <input id="pick-path" class="grow" placeholder="Paste a full path, e.g. C:\code\my-app" spellcheck="false">
+        <button type="button" id="pick-go">Go</button>
+      </div>
+      <div id="pick-list" class="list pick-list"></div>
+      <div class="row">
+        <span id="pick-note" class="muted small grow"></span>
+        <button value="cancel" formnovalidate>Cancel</button>
+        <button type="button" class="primary" id="pick-use">Use this folder</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div id="toasts"></div>
+  <script src="/vendor/xterm.js"></script>
+  <script src="/vendor/addon-fit.js"></script>
+  <script src="/vendor/marked.js"></script>
+  <script src="/vendor/purify.js"></script>
+  <script src="/app.js" type="module"></script>
+</body>
+</html>
