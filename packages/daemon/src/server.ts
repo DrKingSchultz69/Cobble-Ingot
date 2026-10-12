@@ -3,7 +3,7 @@ import { createReadStream, existsSync, readdirSync, statSync } from "node:fs";
 import { createServer, request as httpRequest, type IncomingMessage, type Server } from "node:http";
 import { connect } from "node:net";
 import { homedir } from "node:os";
-import { dirname, extname, join, normalize, resolve } from "node:path";
+import { dirname, extname, join, normalize, resolve, sep } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer, type WebSocket } from "ws";
@@ -12,15 +12,24 @@ import { ensureGraphSchema, neighbors, recent, search, stats } from "../../memor
 import { indexProject, projectKey, renderTree } from "../../memory/src/indexer.ts";
 import { CATALOG, detectAvailability } from "../../router/src/router.ts";
 import { cookies, isAuthorized, sameOrigin, tokenCookie } from "./auth.ts";
+import { BrowserBlocked, SharedBrowser, type BrowserAction, type UserInput } from "./browser.ts";
 import { PORT } from "./config.ts";
 import { usageSummary } from "./db.ts";
 import { httpError, json, Router } from "./http.ts";
-import { TaskManager } from "./tasks.ts";
+import { DiffWatcher } from "./diffwatch.ts";
+import { listDir, readText, writeText } from "./files.ts";
+import { getRecipe, saveRecipe } from "./setup.ts";
+import { runDiagnostics } from "./diagnostics.ts";
+import { addWorker, ensureWorkerSchema, listWorkers, removeWorker, setWorkerFolder, workerCreate, workerOpenUrl, workerTasks } from "./workers.ts";
+import { ensurePushSchema, lastNotification, pushAll, subscribe, unsubscribe, vapidKeys } from "./push.ts";
+import { createProfile, listProfiles, projectProfiles, setProjectProfile } from "./profiles.ts";
+import { presetPipeline, TaskManager, type NewTask } from "./tasks.ts";
 import { cloneRepo, defaultCloneDir, remoteInfo } from "./worktree.ts";
 
 const ROOT = resolve(fileURLToPath(new URL("../../..", import.meta.url)));
 const WEB = join(ROOT, "apps", "web");
 const NM = join(ROOT, "node_modules");
+const MONACO = join(NM, "monaco-editor", "min");
 const VENDOR: Record<string, string> = {
   "xterm.js": join(NM, "@xterm/xterm/lib/xterm.js"),
   "xterm.css": join(NM, "@xterm/xterm/css/xterm.css"),
@@ -30,7 +39,7 @@ const VENDOR: Record<string, string> = {
 };
 const MIME: Record<string, string> = {
   ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8",
-  ".json": "application/json", ".svg": "image/svg+xml", ".png": "image/png", ".webmanifest": "application/manifest+json",
+  ".json": "application/json", ".svg": "image/svg+xml", ".ttf": "font/ttf", ".png": "image/png", ".webmanifest": "application/manifest+json",
 };
 
 export type ServerOpts = {
@@ -38,6 +47,8 @@ export type ServerOpts = {
   token: string;
   tasks?: TaskManager;
   previewPort?: number;
+  /** Shared browser for agents (tests pass a headless one). Default: real Chrome, started on first use. */
+  browser?: SharedBrowser;
   /** Extra API routes (research, learn…), mounted behind auth. */
   extend?: (r: Router, ctx: { db: DatabaseSync; broadcast: (m: unknown) => void }) => void;
 };
@@ -45,15 +56,25 @@ export type ServerOpts = {
 export function createWorkspaceServer(o: ServerOpts): { server: Server; tasks: TaskManager; broadcast: (m: unknown) => void } {
   const { db, token } = o;
   ensureGraphSchema(db);
+  ensurePushSchema(db);
+  ensureWorkerSchema(db);
   const tasks = o.tasks ?? new TaskManager(db);
   const clients = new Set<WebSocket>();
   const broadcast = (m: unknown) => {
     const s = JSON.stringify(m);
     for (const c of clients) if (c.readyState === 1) c.send(s);
   };
+  const diffs = new DiffWatcher((id) => tasks.diff(id), (id) => tasks.get(id)?.cwd);
   tasks.on("task", (t) => t && broadcast({ t: "task", task: t }));
   tasks.on("removed", (id) => broadcast({ t: "removed", id }));
-  tasks.on("notify", (n) => broadcast({ t: "notify", ...n }));
+  tasks.on("notify", (n) => {
+    broadcast({ t: "notify", ...n });
+    // Web push (P24 S2): reaches browsers/phones even with no Netheron tab open.
+    pushAll(db, { title: n.title, body: n.body, task: n.taskId }).catch(() => {});
+  });
+  // Wave 1 live updates: per-task meter, edit guard, checkpoints, queue, alerts.
+  for (const ev of ["meter", "guard", "checkpoint", "queue", "verify", "schedule", "race", "quality"]) tasks.on(ev, (x) => broadcast({ t: ev, ...x }));
+  tasks.on("alert", (a) => broadcast({ t: "alert", alert: a }));
 
   const api = new Router();
 
@@ -65,10 +86,37 @@ export function createWorkspaceServer(o: ServerOpts): { server: Server; tasks: T
     projects: projects(db),
     previewPort: o.previewPort,
     platform: process.platform,
+    stale: codeChangedSinceStart(),
   }));
+  api.get("/api/version", () => ({ stale: codeChangedSinceStart() }));
+  // Remote workers (P25 S2)
+  const bad = (e: unknown) => httpError(400, (e as Error).message);
+  api.get("/api/workers", () => listWorkers(db));
+  api.post("/api/workers", async ({ body }) => {
+    try { return await addWorker(db, { name: String(body.name ?? ""), link: String(body.link ?? ""), folder: String(body.folder ?? "") }); } catch (e) { throw bad(e); }
+  });
+  api.delete("/api/workers/:wid", ({ params }) => { removeWorker(db, params.wid); return { ok: true }; });
+  api.post("/api/workers/:wid/folder", ({ params, body }) => {
+    try { setWorkerFolder(db, params.wid, String(body.folder ?? "")); return { ok: true }; } catch (e) { throw bad(e); }
+  });
+  api.get("/api/workers/:wid/tasks", ({ params }) => workerTasks(db, params.wid).catch((e) => { throw bad(e); }));
+  api.post("/api/workers/:wid/tasks", async ({ params, body }) => {
+    try { return await workerCreate(db, params.wid, body); } catch (e) { throw bad(e); }
+  });
+  api.get("/api/workers/:wid/open", ({ params, query }) => {
+    try { return { url: workerOpenUrl(db, params.wid, query.get("task") ?? undefined) }; } catch (e) { throw bad(e); }
+  });
+  api.get("/api/push/key", () => ({ key: vapidKeys().publicKey }));
+  api.get("/api/push/last", () => lastNotification(db));
+  api.post("/api/push/subscribe", ({ body }) => {
+    try { subscribe(db, String(body.endpoint ?? ""), String(body.agent ?? "")); } catch (e) { throw httpError(400, (e as Error).message); }
+    return { ok: true };
+  });
+  api.post("/api/push/unsubscribe", ({ body }) => { unsubscribe(db, String(body.endpoint ?? "")); return { ok: true }; });
+  api.post("/api/push/test", async () => pushAll(db, { title: "Netheron: test push", body: "Push works. You'll get these even with Netheron closed." }));
   api.post("/api/route", ({ body }) => tasks.route(String(body.prompt ?? "")));
-  api.post("/api/tasks", ({ body }) =>
-    tasks.create({
+  api.post("/api/tasks", async ({ body }) => {
+    const input: NewTask = {
       prompt: String(body.prompt ?? ""),
       title: body.title,
       agent: body.agent,
@@ -77,8 +125,96 @@ export function createWorkspaceServer(o: ServerOpts): { server: Server; tasks: T
       isolate: body.isolate !== false,
       lean: !!body.lean,
       parentId: body.parentId,
-    }),
-  );
+      budgetUsd: Number(body.budgetUsd) || 0,
+      budgetMin: Number(body.budgetMin) || 0,
+      autoHandoff: !!body.autoHandoff,
+      checks: ["run", "dial"].includes(body.checks) ? body.checks : "",
+      verifyCmd: body.verifyCmd ? String(body.verifyCmd) : undefined,
+      profile: body.profile === undefined || body.profile === "default" ? undefined : String(body.profile),
+      browser: !!body.browser,
+    };
+    if (body.pipeline) input.pipeline = { steps: presetPipeline(String(body.pipeline), detectAvailability()), index: 0 };
+    // Race & Judge: same task on several agents.
+    if (body.race) return { race: await tasks.race(input) };
+    // Night Shift: schedule instead of starting now.
+    if (body.when && body.when !== "now") {
+      const at = body.at ? Date.parse(String(body.at)) : 0;
+      return { scheduled: tasks.schedule(input, { at: Number.isNaN(at) ? 0 : at, afterReset: body.when === "reset", daily: !!body.daily }) };
+    }
+    return tasks.create(input);
+  });
+  api.get("/api/schedule", () => ({ schedule: tasks.scheduled() }));
+  api.get("/api/races/:rid", ({ params }) => {
+    const r = tasks.getRace(params.rid);
+    if (!r) throw httpError(404, "no such race");
+    return { race: r, tasks: tasks.raceTasks(params.rid) };
+  });
+  // Quality watch (P01)
+  api.get("/api/quality", ({ query }) => {
+    const p = query.get("project") ?? "";
+    if (!p || !existsSync(p)) throw httpError(400, "folder not found");
+    return { evals: tasks.evals(p), scores: tasks.quality(p) };
+  });
+  api.post("/api/quality/evals", ({ body }) => {
+    try { return tasks.addEval(String(body.project ?? ""), String(body.title ?? ""), String(body.prompt ?? ""), String(body.verify ?? "")); }
+    catch (e) { throw httpError(400, (e as Error).message); }
+  });
+  api.delete("/api/quality/evals/:eid", ({ params }) => { tasks.deleteEval(Number(params.eid)); return { ok: true }; });
+  api.post("/api/quality/run", async ({ body }) => {
+    try { return { races: await tasks.runQuality(String(body.project ?? "")) }; } catch (e) { throw httpError(400, (e as Error).message); }
+  });
+  api.post("/api/races/:rid/judge", ({ params }) => tasks.judge(params.rid));
+  api.post("/api/races/:rid/keep", ({ params, body }) => tasks.keepWinner(params.rid, body.task ? String(body.task) : undefined));
+  api.delete("/api/schedule/:sid", ({ params }) => { tasks.unschedule(Number(params.sid)); return { schedule: tasks.scheduled() }; });
+  api.get("/api/brief", ({ query }) => ({ since: Date.now() - Number(query.get("hours") ?? 16) * 3600_000, tasks: tasks.brief(Date.now() - Number(query.get("hours") ?? 16) * 3600_000) }));
+  // Account profiles (P13)
+  api.get("/api/profiles", ({ query }) => ({ profiles: listProfiles(db), projectDefaults: query.get("project") && existsSync(query.get("project")!) ? projectProfiles(db, query.get("project")!) : {} }));
+  api.post("/api/profiles", ({ body }) => {
+    try { return createProfile(db, String(body.agent ?? ""), String(body.name ?? "")); } catch (e) { throw httpError(400, (e as Error).message); }
+  });
+  api.delete("/api/profiles/:id", async ({ params }) => {
+    try { await tasks.deleteProfile(params.id); } catch (e) { throw httpError(409, (e as Error).message); }
+    return { ok: true };
+  });
+  api.post("/api/profiles/:id/login", ({ params }) => tasks.loginTask(params.id));
+  api.post("/api/profiles/default", ({ body }) => {
+    const p = String(body.project ?? "");
+    if (!p || !existsSync(p)) throw httpError(400, "folder not found");
+    setProjectProfile(db, p, String(body.agent ?? ""), String(body.profile ?? ""));
+    return { projectDefaults: projectProfiles(db, p) };
+  });
+  api.post("/api/tasks/:id/checks", ({ params }) => tasks.runChecks(needTask(params.id)));
+  api.post("/api/tasks/:id/handoff", ({ params, body }) =>
+    tasks.handoff(needTask(params.id), body.reason ? String(body.reason) : "was handed off by you", body.agent ? String(body.agent) : undefined));
+  // Wave 1: meter, checkpoints + edit guard, queue, diff comments, receipt, limit wait, alerts, worktree setup.
+  const needTask = (id: string) => {
+    if (!tasks.get(id)) throw httpError(404, "no such task");
+    return id;
+  };
+  api.get("/api/tasks/:id/meter", ({ params }) => tasks.meter(needTask(params.id)));
+  api.get("/api/tasks/:id/checkpoints", async ({ params }) => ({ checkpoints: await tasks.checkpoints(needTask(params.id)), guard: tasks.guard(params.id) }));
+  api.post("/api/tasks/:id/restore", ({ params, body }) => tasks.restore(needTask(params.id), Number(body.n), body.path ? String(body.path) : undefined));
+  api.get("/api/tasks/:id/queue", ({ params }) => ({ queue: tasks.queue(needTask(params.id)) }));
+  api.post("/api/tasks/:id/queue", ({ params, body }) => ({ queue: tasks.enqueue(needTask(params.id), String(body.text ?? "")) }));
+  api.delete("/api/tasks/:id/queue/:qid", ({ params }) => ({ queue: tasks.unqueue(needTask(params.id), Number(params.qid)) }));
+  api.post("/api/tasks/:id/comment", ({ params, body }) =>
+    ({ queue: tasks.comment(needTask(params.id), String(body.file ?? ""), Number(body.line) || 0, String(body.text ?? "")) }));
+  api.get("/api/tasks/:id/receipt", ({ params }) => tasks.receipt(needTask(params.id)));
+  api.post("/api/tasks/:id/cancel-wait", ({ params }) => {
+    tasks.cancelWait(needTask(params.id));
+    return { ok: true };
+  });
+  api.get("/api/alerts", ({ query }) => ({ alerts: tasks.alerts({ since: Date.now() - Number(query.get("hours") ?? 24) * 3600_000 }) }));
+  api.get("/api/projects/setup", ({ query }) => {
+    const p = query.get("path") ?? "";
+    if (!p || !existsSync(p)) throw httpError(400, "folder not found");
+    return getRecipe(db, p);
+  });
+  api.post("/api/projects/setup", ({ body }) => {
+    const p = String(body.path ?? "");
+    if (!p || !existsSync(p)) throw httpError(400, "folder not found");
+    try { return saveRecipe(db, p, body); } catch (e) { throw httpError(400, (e as Error).message); }
+  });
   api.post("/api/tasks/:id/input", ({ params, body }) => {
     tasks.write(params.id, String(body.data ?? ""));
     return { ok: true };
@@ -99,6 +235,20 @@ export function createWorkspaceServer(o: ServerOpts): { server: Server; tasks: T
     return { alive: !!s?.alive, text: text.slice(-n) };
   });
   api.get("/api/tasks/:id/diff", ({ params }) => tasks.diff(params.id));
+  // Code tab: browse, open and save files in the task's folder (same root as the diff).
+  const taskRoot = (id: string) => {
+    const t = tasks.get(id);
+    if (!t) throw httpError(404, "no such task");
+    if (!existsSync(t.cwd)) throw httpError(410, "the task's folder no longer exists");
+    return t.cwd;
+  };
+  api.post("/api/tasks/:id/diagnostics", ({ params, body }) => runDiagnostics(taskRoot(params.id), body.command ? String(body.command) : undefined));
+  api.get("/api/tasks/:id/files", ({ params, query }) => listDir(taskRoot(params.id), query.get("dir") ?? ""));
+  api.get("/api/tasks/:id/file", ({ params, query }) => readText(taskRoot(params.id), query.get("path") ?? ""));
+  api.post("/api/tasks/:id/file", ({ params, body }) => {
+    if (typeof body.content !== "string") throw httpError(400, "content must be text");
+    return writeText(taskRoot(params.id), String(body.path ?? ""), body.content, body.baseHash ?? null, body.force === true);
+  });
   api.get("/api/preview-link", ({ query }) => {
     const port = Number(query.get("port"));
     if (!(port > 0 && port < 65536)) throw httpError(400, "bad port");
@@ -131,6 +281,62 @@ export function createWorkspaceServer(o: ServerOpts): { server: Server; tasks: T
          FROM calls WHERE ts >= ? AND task != '' GROUP BY task, agent ORDER BY MAX(ts) DESC LIMIT 50`,
       ).all(since),
     };
+  });
+
+  // --- shared browser (agents' browser_* tools + Take over / Resume) ----------------------------------------
+  // The agent's MCP server calls these with the token. Every action goes through SharedBrowser's hard blocks.
+  let sharedBrowser = o.browser;
+  const browser = () => (sharedBrowser ??= new SharedBrowser({ imageFormat: "jpeg" }));
+  tasks.on("removed", (id) => { if (sharedBrowser?.has(id)) void sharedBrowser.closeTab(id); }); // window closes with the task
+  const browserTask = (id: string) => {
+    const t = tasks.get(id);
+    if (!t) throw httpError(404, "no such task");
+    if (!t.browser) throw httpError(403, "This task doesn't have the browser. Tick 🌐 Browser when you start a task.");
+    return t;
+  };
+  const blocked = (e: unknown) => (e instanceof BrowserBlocked ? httpError(409, e.message) : httpError(400, (e as Error).message));
+  api.get("/api/tasks/:id/browser", ({ params }) => {
+    const t = browserTask(params.id);
+    return { control: t.browser_wait ? "user" : "agent", reason: t.browser_wait, window: !!sharedBrowser?.has(params.id) };
+  });
+  api.post("/api/tasks/:id/browser", async ({ params, body }) => {
+    browserTask(params.id);
+    try {
+      if (body.action === "screenshot") {
+        // Read-only, but still the agent's: no peeking while the user types a code or password.
+        if (browser().control(params.id) === "user") throw new BrowserBlocked("The user has control of the browser right now. Wait: you'll get a message when they hand it back.");
+        return await browser().screenshot(params.id);
+      }
+      return await browser().act(params.id, body as BrowserAction);
+    } catch (e) { throw blocked(e); }
+  });
+  api.post("/api/tasks/:id/browser/ask", async ({ params, body }) => {
+    browserTask(params.id);
+    try { await browser().handToUser(params.id); } catch (e) { throw blocked(e); }
+    tasks.browserToUser(params.id, String(body.reason ?? ""));
+    return { message: "The user now has the browser and was notified. Stop here and wait: you'll get \"Done, continue\" when they hand it back." };
+  });
+  api.post("/api/tasks/:id/browser/takeover", async ({ params }) => {
+    browserTask(params.id);
+    try { await browser().handToUser(params.id); } catch (e) { throw blocked(e); }
+    tasks.browserToUser(params.id, "", true);
+    return { ok: true };
+  });
+  api.post("/api/tasks/:id/browser/resume", async ({ params }) => {
+    browserTask(params.id);
+    let url = "";
+    try { url = (await browser().resume(params.id)).url; } catch (e) { throw blocked(e); }
+    return { ok: true, url, queue: tasks.browserToAgent(params.id) };
+  });
+  api.post("/api/tasks/:id/browser/show", async ({ params }) => {
+    browserTask(params.id);
+    try { await browser().show(params.id); } catch (e) { throw blocked(e); }
+    return { ok: true };
+  });
+  api.post("/api/tasks/:id/browser/finish", ({ params, body }) => {
+    browserTask(params.id);
+    tasks.browserFinished(params.id, String(body.summary ?? ""));
+    return { message: "Noted. The window stays open so the user can look; it closes when they remove the task." };
   });
 
   // --- memory --------------------------------------------------------------
@@ -180,13 +386,21 @@ export function createWorkspaceServer(o: ServerOpts): { server: Server; tasks: T
       if (url.pathname.startsWith("/api/")) return json(res, 401, { error: "unauthorized" });
       res.writeHead(401, { "content-type": "text/html; charset=utf-8" });
       res.end(`<!doctype html><meta name=viewport content="width=device-width"><body style="font:16px system-ui;padding:24px;background:#0b0d10;color:#e6e6e6">
-        <h2>mm workspace</h2><p>Open the link printed by <code>mm serve</code> (it contains your access token).</p></body>`);
+        <h2>Netheron</h2><p>Open the link printed by <code>mm serve</code> or <code>start-netheron.cmd</code> (it contains your access token).</p></body>`);
       return;
     }
     if (url.pathname.startsWith("/api/")) {
       if (req.method !== "GET" && !sameOrigin(req)) return json(res, 403, { error: "cross-origin request blocked" });
       if (!(await api.handle(req, res))) json(res, 404, { error: "not found" });
       return;
+    }
+    if (url.pathname.startsWith("/vendor/monaco/")) {
+      // Whole Monaco AMD bundle (loader, editor, workers, languages); must stay inside that folder.
+      let rel: string;
+      try { rel = decodeURIComponent(url.pathname.slice("/vendor/monaco/".length)); } catch { return json(res, 400, { error: "bad path" }); }
+      const abs = join(MONACO, normalize(rel));
+      if (!abs.startsWith(MONACO + sep)) return json(res, 403, { error: "forbidden" });
+      return serveFile(res, abs, "public, max-age=86400");
     }
     if (url.pathname.startsWith("/vendor/")) {
       const f = VENDOR[url.pathname.slice(8)];
@@ -210,20 +424,61 @@ export function createWorkspaceServer(o: ServerOpts): { server: Server; tasks: T
   wss.on("connection", (ws) => {
     clients.add(ws);
     const subs = new Map<string, () => void>();
+    let unwatchDiff: (() => void) | undefined;
+    let unwatchBrowser: (() => void) | undefined;
+    let watchGen = 0;
     ws.on("message", (raw) => {
-      let m: { t: string; id?: string; data?: string; cols?: number; rows?: number };
+      let m: { t: string; id?: string; data?: string; cols?: number; rows?: number; input?: UserInput };
       try { m = JSON.parse(String(raw)); } catch { return; }
       const id = m.id ?? "";
       if (m.t === "attach") {
         subs.get(id)?.();
+        const attach = (s: NonNullable<ReturnType<TaskManager["session"]>>) => {
+          ws.send(JSON.stringify({ t: "buffer", id, data: s.buffer() }));
+          subs.set(id, s.subscribe((data) => ws.readyState === 1 && ws.send(JSON.stringify({ t: "data", id, data }))));
+        };
         const s = tasks.session(id);
-        ws.send(JSON.stringify({ t: "buffer", id, data: s?.buffer() ?? "\r\n[session not running — the daemon was restarted or the task ended]\r\n" }));
-        if (s) subs.set(id, s.subscribe((data) => ws.readyState === 1 && ws.send(JSON.stringify({ t: "data", id, data }))));
+        if (s) attach(s);
+        else if (tasks.get(id)?.status === "starting") {
+          // Setup recipe still running: attach as soon as the agent starts.
+          ws.send(JSON.stringify({ t: "buffer", id, data: "\r\n[preparing the worktree…]\r\n" }));
+          const later = (sid: string) => {
+            if (sid !== id) return;
+            tasks.off("session", later);
+            const ss = tasks.session(id);
+            if (ss && ws.readyState === 1) attach(ss);
+          };
+          tasks.on("session", later);
+          subs.set(id, () => tasks.off("session", later));
+        } else ws.send(JSON.stringify({ t: "buffer", id, data: "\r\n[session not running — the daemon was restarted or the task ended]\r\n" }));
       } else if (m.t === "detach") {
         subs.get(id)?.();
         subs.delete(id);
       } else if (m.t === "input" && typeof m.data === "string") {
         tasks.write(id, m.data);
+      } else if (m.t === "watch-diff") {
+        // One live diff per connection: the task shown in the Diff tab.
+        unwatchDiff?.();
+        unwatchDiff = tasks.get(id) ? diffs.subscribe(id, (d) => ws.readyState === 1 && ws.send(JSON.stringify({ t: "diff", id, ...d }))) : undefined;
+      } else if (m.t === "unwatch-diff") {
+        unwatchDiff?.();
+        unwatchDiff = undefined;
+      } else if (m.t === "watch-browser") {
+        // Browser tab: one live view per connection. Frames are dropped while this client is still behind.
+        unwatchBrowser?.();
+        unwatchBrowser = undefined;
+        const gen = ++watchGen;
+        if (!tasks.get(id)?.browser) return;
+        void browser().watch(id, (f) => {
+          if (ws.readyState === 1 && ws.bufferedAmount < 2_000_000) ws.send(JSON.stringify({ t: "browser-frame", id, ...f }));
+        }).then((stop) => { if (gen === watchGen && ws.readyState === 1) unwatchBrowser = stop; else stop(); });
+      } else if (m.t === "unwatch-browser") {
+        watchGen++;
+        unwatchBrowser?.();
+        unwatchBrowser = undefined;
+      } else if (m.t === "browser-input" && m.input) {
+        if (!tasks.get(id)?.browser) return;
+        browser().userInput(id, m.input).catch((e) => ws.readyState === 1 && ws.send(JSON.stringify({ t: "browser-error", id, error: (e as Error).message })));
       } else if (m.t === "resize") {
         tasks.resize(id, Number(m.cols), Number(m.rows));
       }
@@ -231,10 +486,32 @@ export function createWorkspaceServer(o: ServerOpts): { server: Server; tasks: T
     ws.on("close", () => {
       clients.delete(ws);
       for (const u of subs.values()) u();
+      unwatchDiff?.();
+      watchGen++;
+      unwatchBrowser?.();
     });
   });
 
   return { server, tasks, broadcast };
+}
+
+// The browser always loads the newest UI files, but server code only changes on restart.
+// Fingerprint the server's own source at startup so the UI can say "restart mm" instead of failing oddly.
+const SRC_DIRS = ["daemon", "memory", "router", "research"].map((p) => join(ROOT, "packages", p, "src"));
+function sourceFingerprint(): string {
+  const parts: string[] = [];
+  for (const dir of SRC_DIRS) {
+    if (!existsSync(dir)) continue;
+    for (const f of readdirSync(dir, { recursive: true }) as string[]) {
+      if (!/\.ts$/.test(f)) continue;
+      try { parts.push(`${f}:${statSync(join(dir, f)).mtimeMs}`); } catch { /* removed */ }
+    }
+  }
+  return parts.sort().join("|");
+}
+const STARTED_WITH = sourceFingerprint();
+export function codeChangedSinceStart(): boolean {
+  return sourceFingerprint() !== STARTED_WITH;
 }
 
 export function stripAnsi(s: string): string {
@@ -245,9 +522,9 @@ export function stripAnsi(s: string): string {
     .replace(/\r(?!\n)/g, "\n");
 }
 
-function serveFile(res: import("node:http").ServerResponse, abs: string) {
+function serveFile(res: import("node:http").ServerResponse, abs: string, cache = "no-cache") {
   if (!existsSync(abs) || !statSync(abs).isFile()) return json(res, 404, { error: "not found" });
-  res.writeHead(200, { "content-type": MIME[extname(abs)] ?? "application/octet-stream", "cache-control": "no-cache" });
+  res.writeHead(200, { "content-type": MIME[extname(abs)] ?? "application/octet-stream", "cache-control": cache });
   createReadStream(abs).pipe(res);
 }
 
@@ -295,7 +572,7 @@ export function createPreviewServer(token: string, blockedPorts: number[] = [POR
       }
       // Never expose the model proxy (it forwards credentials) through the preview.
       if (blockedPorts.includes(port)) {
-        res.writeHead(403).end("that port belongs to mm itself");
+        res.writeHead(403).end("that port belongs to Netheron itself");
         return;
       }
       const next = url.searchParams.get("path") || "/";
@@ -307,7 +584,7 @@ export function createPreviewServer(token: string, blockedPorts: number[] = [POR
       return;
     }
     if (!isAuthorized(req, token) || !target(req)) {
-      res.writeHead(401, { "content-type": "text/plain" }).end("Open the preview from the mm workspace (Preview tab).");
+      res.writeHead(401, { "content-type": "text/plain" }).end("Open the preview from Netheron (Preview tab).");
       return;
     }
     const up = httpRequest(

@@ -3,13 +3,13 @@ import { networkInterfaces } from "node:os";
 import { mountResearch } from "../../research/src/routes.ts";
 import { commandLine, launchFor } from "./agents.ts";
 import { loadToken } from "./auth.ts";
-import { HOST, PORT } from "./config.ts";
+import { HOST, PORT, UI_PORT } from "./config.ts";
 import { openDb, usageSummary } from "./db.ts";
 import { createProxy } from "./proxy.ts";
 import { createPreviewServer, createWorkspaceServer } from "./server.ts";
 import { mainRepoRootSync } from "./worktree.ts";
 
-const UI_PORT = Number(process.env.MM_UI_PORT ?? 4142);
+
 const PREVIEW_PORT = Number(process.env.MM_PREVIEW_PORT ?? 4143);
 
 const [cmd, ...rest] = process.argv.slice(2);
@@ -47,8 +47,8 @@ switch (cmd) {
     });
     createPreviewServer(token, [PORT, UI_PORT, PREVIEW_PORT]).listen(PREVIEW_PORT, bind, () => console.log(`preview    http://localhost:${PREVIEW_PORT}  (pick a port in the Preview tab)`));
     const shutdown = () => {
-      tasks.dispose();
-      process.exit(0);
+      tasks.dispose().finally(() => process.exit(0));
+      setTimeout(() => process.exit(0), 4000).unref(); // never hang on Ctrl+C
     };
     process.on("SIGINT", shutdown);
     process.on("SIGTERM", shutdown);
@@ -100,7 +100,7 @@ switch (cmd) {
   }
 
   default:
-    console.log(`mm — multimodel management
+    console.log(`Netheron — multimodel workspace (command: mm)
 
   mm serve [--lan]            start proxy (:${PORT}), workspace UI (:${UI_PORT}) and build preview (:${PREVIEW_PORT})
                               --lan also listens on your Wi-Fi address so your phone can connect

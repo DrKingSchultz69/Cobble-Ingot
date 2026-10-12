@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#0d0f12">
-  <title>mm workspace</title>
+  <title>Netheron</title>
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="icon" href="/icon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/vendor/xterm.css">
@@ -13,9 +13,10 @@
 <body>
   <header class="top">
     <button class="icon-btn only-mobile" id="menu-btn" aria-label="Menu">☰</button>
-    <div class="brand"><span class="logo">mm</span><span class="brand-name">workspace</span></div>
+    <div class="brand"><span class="logo">N</span><span class="brand-name">Netheron</span></div>
     <nav class="views" id="views">
-      <button data-view="workspace" class="active">Workspace</button>
+      <button data-view="home" class="active">Home<span class="count" id="home-count" hidden></span></button>
+      <button data-view="workspace">Workspace</button>
       <button data-view="research">Research</button>
       <button data-view="learn">Learn</button>
       <button data-view="memory">Memory</button>
@@ -25,32 +26,129 @@
       <a id="project-remote" class="remote-badge" target="_blank" rel="noopener" hidden></a>
       <select id="project" title="Project folder"></select>
       <button id="project-add" title="Add project folder">📁 Add</button>
+      <button id="acct-btn" class="icon-btn" title="Accounts: several logins per agent">👤</button>
+      <div class="bell-wrap">
+        <button id="bell" class="icon-btn bell" title="Notifications" aria-haspopup="true">🔔<span class="bell-dot"></span></button>
+        <div id="bell-menu" class="bell-menu" hidden>
+          <div class="card-title">Notifications</div>
+          <div id="bell-status" class="small"></div>
+          <div class="row">
+            <button id="bell-toggle" class="primary"></button>
+            <button id="bell-test">Send test</button>
+          </div>
+          <div class="row"><label class="small grow"><input type="checkbox" id="bell-push"> Also when Netheron is closed (push)</label></div>
+          <p class="muted small">You get one when a task finishes, fails, or needs your answer. Windows pop-ups only appear while Netheron's tab is hidden; Netheron's own pop-ups (bottom right) always do.</p>
+        </div>
+      </div>
       <span id="conn" class="dot" title="connection"></span>
     </div>
   </header>
+  <div class="stale" id="stale" hidden>Netheron was updated while it was running. Close the <b>start-netheron</b> window and open it again to load the new version.</div>
+
+  <!-- HOME: only what needs you, plus one way to start -->
+  <section class="view active" id="view-home">
+    <div class="home">
+      <h2 id="home-title">Needs you</h2>
+      <div id="home-list" class="home-list"></div>
+      <p id="home-sum" class="muted small home-sum"></p>
+      <button class="primary home-new" id="home-new">＋ New task</button>
+    </div>
+  </section>
 
   <!-- WORKSPACE -->
-  <section class="view active" id="view-workspace">
+  <section class="view" id="view-workspace">
     <aside class="side" id="side">
-      <form id="new-task" class="card">
+      <form id="new-task" class="card wiz" data-step="1">
         <div class="card-title">New task</div>
-        <textarea id="nt-prompt" rows="4" placeholder="What should an agent do? e.g. Fix the login crash on refresh"></textarea>
-        <div class="row">
-          <select id="nt-agent">
-            <option value="auto">Auto (router decides)</option>
-            <option value="claude">Claude Code</option>
-            <option value="codex">Codex</option>
-            <option value="opencode">OpenCode</option>
-            <option value="shell">Shell</option>
-          </select>
-          <input id="nt-model" placeholder="model (optional)">
+        <div class="wiz-steps" id="nt-steps">
+          <button type="button" data-step="1" class="on">1 What</button>
+          <button type="button" data-step="2">2 Who</button>
+          <button type="button" data-step="3">3 Extras</button>
         </div>
-        <div class="row small">
-          <label><input type="checkbox" id="nt-isolate" checked> own worktree</label>
-          <label title="Claude: load only the mm memory MCP server (much smaller context)"><input type="checkbox" id="nt-lean" checked> lean</label>
+        <!-- step 1: what + where -->
+        <div class="wiz-step" data-step="1">
+          <textarea id="nt-prompt" rows="4" placeholder="What should an agent do? e.g. Fix the login crash on refresh"></textarea>
+          <label class="small wiz-field">Project <select id="nt-project" title="Project folder"></select></label>
+          <div id="nt-route" class="route-hint"></div>
         </div>
-        <div id="nt-route" class="route-hint"></div>
-        <button class="primary" type="submit">Start</button>
+        <!-- step 2: who does it, with what limits -->
+        <div class="wiz-step" data-step="2">
+          <div class="row">
+            <select id="nt-agent">
+              <option value="auto">Auto (router decides)</option>
+              <option value="claude">Claude Code</option>
+              <option value="codex">Codex</option>
+              <option value="opencode">OpenCode</option>
+              <option value="pi">Pi</option>
+              <option value="omp">Oh My Pi</option>
+              <option value="shell">Shell</option>
+            </select>
+            <input id="nt-model" placeholder="model (optional)">
+          </div>
+          <div class="row small" id="nt-profile-row" hidden>
+            <label title="Which login this agent uses (👤 to manage)">Account <select id="nt-profile"></select></label>
+          </div>
+          <div class="row small budget-row">
+            <label title="Interrupt the agent and ask you once this much is spent">max $ <input id="nt-budget-usd" type="number" min="0" step="0.5" placeholder="–"></label>
+            <label title="Interrupt the agent and ask you after this many minutes">max min <input id="nt-budget-min" type="number" min="0" step="5" placeholder="–"></label>
+          </div>
+          <div class="row small">
+            <label id="nt-browser-wrap" title="Give this agent its own window in Netheron's Chrome. It never types passwords or clicks pay/order/buy/delete, and asks you for logins."><input type="checkbox" id="nt-browser"> 🌐 Browser</label>
+          </div>
+        </div>
+        <!-- step 3: everything else, one named group each, closed until opened -->
+        <div class="wiz-step" data-step="3">
+          <details class="wiz-group">
+            <summary>⏰ When <span class="muted small" id="nt-sum-when"></span></summary>
+            <div class="row small">
+              <label title="Run now, later, or after the agent's usage limit resets">Run
+                <select id="nt-when"><option value="now">now</option><option value="at">at a time…</option><option value="reset">after the limit resets</option></select>
+              </label>
+              <input id="nt-at" type="datetime-local" hidden>
+              <label id="nt-daily-wrap" hidden><input type="checkbox" id="nt-daily"> every day</label>
+            </div>
+          </details>
+          <details class="wiz-group">
+            <summary>👥 Teamwork <span class="muted small" id="nt-sum-team"></span></summary>
+            <div class="row small">
+              <label title="Same task on up to 3 agents in parallel; checks and diff size pick the winner"><input type="checkbox" id="nt-race"> Race &amp; Judge</label>
+              <label title="If the agent gets stuck or hits a usage limit, continue the same work with a different agent automatically"><input type="checkbox" id="nt-autohandoff"> auto hand-off</label>
+            </div>
+            <div class="row small">
+              <label title="Several agents one after another in the same folder">Pipeline
+                <select id="nt-pipeline"><option value="">none</option><option value="plan-build-review">Plan → Build → Review</option></select>
+              </label>
+            </div>
+          </details>
+          <details class="wiz-group">
+            <summary>✅ Checks <span class="muted small" id="nt-sum-checks"></span></summary>
+            <div class="row small">
+              <label title="What happens when the agent finishes a turn">After each turn
+                <select id="nt-checks">
+                  <option value="">do nothing</option>
+                  <option value="run">run checks</option>
+                  <option value="dial">Budget Dial: cheapest model first, move up if checks fail</option>
+                </select>
+              </label>
+            </div>
+          </details>
+          <details class="wiz-group">
+            <summary>⚙ Machine &amp; worktree <span class="muted small" id="nt-sum-machine"></span></summary>
+            <div class="row small">
+              <label><input type="checkbox" id="nt-isolate" checked> own worktree</label>
+              <label title="Claude: load only Netheron's shared-memory server (much smaller context)"><input type="checkbox" id="nt-lean" checked> lean</label>
+            </div>
+            <div class="row small">
+              <label id="nt-worker-wrap" hidden title="Run on another machine running Netheron (add one in Usage → Remote workers)">Run on <select id="nt-worker"></select></label>
+              <button type="button" id="nt-setup" class="link-btn" title="Files to copy, folders to link and a command to run in every new worktree">⚙ Worktree setup</button>
+            </div>
+          </details>
+        </div>
+        <div class="row wiz-nav">
+          <button type="button" id="nt-back">← Back</button>
+          <button type="button" id="nt-next">Next →</button>
+          <button class="primary grow" type="submit" id="nt-start">▶ Start</button>
+        </div>
       </form>
       <div id="board"></div>
     </aside>
@@ -61,6 +159,39 @@
         <h2>No task open</h2>
         <p>Describe a task on the left. The router picks the agent and model, gives it its own git worktree and shared memory.</p>
       </div></div>
+      <div class="ide" id="ide" hidden>
+        <div class="ide-files" id="ide-files">
+          <div class="ide-head">Explorer</div>
+          <div class="ide-tree list" id="code-tree"></div>
+        </div>
+        <div class="ide-main" id="ide-main">
+          <div class="ide-editor">
+            <div class="ftabs">
+              <button class="icon-btn only-mobile" id="code-files-btn" title="Files">☰</button>
+              <div class="ftab-list" id="code-tabs"></div>
+              <button id="code-check" class="save-btn" title="Run the project's type checker / linter and mark problems">Check code</button>
+              <button id="code-save" class="save-btn" disabled title="Save (Ctrl+S)">Save</button>
+            </div>
+            <div class="crumbs" id="code-crumbs"></div>
+            <div class="diag-bar" id="code-diag" hidden></div>
+            <div id="code-conflict" class="conflict" hidden>
+              <span class="grow">An agent changed this file while you were editing it.</span>
+              <button id="code-reload">Use theirs</button><button id="code-keep">Keep mine</button>
+            </div>
+            <div class="code-stage">
+              <div id="code-editor"></div>
+              <div id="code-empty" class="code-empty"><p>Open a file from the Explorer.</p><p class="muted small">Ctrl+S saves · middle-click closes a tab · agent edits appear live</p></div>
+            </div>
+          </div>
+          <div class="ide-term-wrap" id="ide-term-wrap">
+            <div class="ide-drag" id="ide-drag">
+              <button class="ide-term-toggle" id="ide-term-toggle" title="Fold / unfold the terminal">Terminal</button>
+              <span class="muted small ide-term-title" id="ide-term-title"></span>
+            </div>
+            <div class="ide-term" id="ide-term"></div>
+          </div>
+        </div>
+      </div>
       <div class="keybar" id="keybar">
         <button data-key="\r">Enter</button><button data-key="y">y</button><button data-key="n">n</button>
         <button data-key="\x1b">Esc</button><button data-key="\x03">Ctrl+C</button>
@@ -74,6 +205,7 @@
         <button data-tab="info" class="active">Info</button>
         <button data-tab="diff">Diff</button>
         <button data-tab="preview">Preview</button>
+        <button data-tab="browser" id="rt-browser" hidden>🌐 Browser</button>
       </div>
       <div class="right-body">
         <div data-pane="info" class="active" id="info"><p class="muted">Select a task.</p></div>
@@ -82,6 +214,23 @@
           <div class="row"><input id="pv-port" type="number" placeholder="dev server port, e.g. 5173"><button id="pv-go">Open</button></div>
           <p class="muted small">Proxies a dev server on this machine so you can view the build from your phone.</p>
           <iframe id="pv-frame" title="preview"></iframe>
+        </div>
+        <div data-pane="browser" id="bv">
+          <div class="row bv-bar">
+            <span id="bv-state" class="grow small"></span>
+            <button id="bv-show" title="Bring this task's Chrome window to the front on the PC">Show window</button>
+            <button id="bv-take" title="Block the agent and drive yourself">Take over</button>
+            <button id="bv-resume" class="primary" title="Hand the browser back; the agent gets 'Done, continue'">Resume</button>
+          </div>
+          <div id="bv-url" class="muted small bv-url"></div>
+          <div class="bv-stage" id="bv-stage">
+            <img id="bv-img" tabindex="0" alt="Live view of this task's browser" draggable="false" hidden>
+            <p id="bv-empty" class="muted">The agent hasn't opened the browser yet. The live view starts when it does.</p>
+          </div>
+          <form id="bv-type" class="row">
+            <input id="bv-text" class="grow" placeholder="Type into the page (handy on a phone)" autocomplete="off">
+            <button>Send</button><button type="button" id="bv-enter">Enter</button>
+          </form>
         </div>
       </div>
     </aside>
@@ -188,7 +337,7 @@
       </div>
       <form id="mem-add" class="card">
         <div class="card-title">Add to memory</div>
-        <select id="mem-kind"><option>decision</option><option>note</option><option>bug</option><option>todo</option></select>
+        <select id="mem-kind"><option>decision</option><option value="rule">rule (given to every agent)</option><option>note</option><option>bug</option><option>todo</option></select>
         <input id="mem-title" placeholder="Title">
         <textarea id="mem-body" rows="3" placeholder="Why / details"></textarea>
         <button>Save</button>
@@ -214,6 +363,25 @@
       </div>
       <p class="muted small">Cost is real spend for <b>api_key</b> rows. For <b>subscription</b> rows it is what the same calls would cost at API prices.</p>
       <div id="us-summary"></div>
+      <h3>Remote workers</h3>
+      <p class="muted small">Another machine running Netheron (a server, second PC, dev box). Its tasks appear on your board and you can start tasks there. Paste the link it prints (with <code>?token=</code>). Reach it directly, via <code>mm tunnel</code>, or an SSH forward: <code>ssh -L 5142:localhost:4142 host</code> → <code>http://localhost:5142/?token=…</code></p>
+      <div id="us-workers"></div>
+      <form id="us-worker-form" class="ask">
+        <div class="row"><input id="wk-name" placeholder="Name, e.g. build server" style="max-width:180px"><input id="wk-link" class="grow" placeholder="http://host:4142/?token=…"></div>
+        <div class="row"><input id="wk-folder" class="grow" placeholder="Project folder on that machine (optional: defaults to its first project)"><button>Connect</button></div>
+      </form>
+      <h3>Quality watch</h3>
+      <p class="muted small">Your own small tasks with a check, run on every available model. Shows which model does best on <b>your</b> code, warns when one gets worse, and feeds the router. Running it uses your quota (one task per model per eval).</p>
+      <div id="us-quality"></div>
+      <form id="us-eval-form" class="ask">
+        <div class="row"><input id="ev-title" placeholder="Name, e.g. add a REST endpoint" class="grow"></div>
+        <textarea id="ev-prompt" rows="2" placeholder="The task, exactly as you'd give it to an agent"></textarea>
+        <div class="row"><input id="ev-verify" class="grow" placeholder="Check command that passes only if it's done right, e.g. npm test -- api.test.ts"><button>Add eval</button><button type="button" id="ev-run" class="primary">Run quality watch</button></div>
+      </form>
+      <div class="row"><h3 class="grow">Brief</h3><select id="us-brief-hours"><option value="16" selected>last 16 h (overnight)</option><option value="24">last 24 h</option><option value="168">last 7 days</option></select></div>
+      <div id="us-brief"></div>
+      <h3>Alerts</h3>
+      <div id="us-alerts"></div>
       <h3>By task</h3>
       <div id="us-tasks"></div>
     </main>
@@ -239,6 +407,35 @@
         <button value="cancel" formnovalidate>Cancel</button>
         <button type="button" class="primary" id="pick-use">Use this folder</button>
       </div>
+    </form>
+  </dialog>
+
+  <dialog id="setup-dlg">
+    <form method="dialog" class="card">
+      <div class="card-title">Worktree setup</div>
+      <p class="muted small">Runs every time a task gets its own worktree in <b id="setup-project"></b>. Git doesn't copy untracked files, so list what the agent needs.</p>
+      <p id="setup-auto" class="small" hidden>Not configured yet: these are Netheron's defaults (root <code>.env</code> files, <code>node_modules</code> linked). Save to keep or change them.</p>
+      <label class="small">Copy these files (one per line)<textarea id="setup-copy" rows="3" placeholder=".env&#10;.env.local"></textarea></label>
+      <label class="small">Link these folders instead of copying (fast, shared with your checkout)<textarea id="setup-link" rows="2" placeholder="node_modules"></textarea></label>
+      <label class="small">Then run (optional, e.g. <code>npm ci</code>)<input id="setup-run" placeholder="none"></label>
+      <label class="small">Checks command (tests/build; used by "run checks", Budget Dial, pipelines, Race &amp; Judge)<input id="setup-verify" placeholder="e.g. npm test"></label>
+      <div id="setup-error" class="small s-failed"></div>
+      <div class="row"><span class="grow"></span><button value="cancel" formnovalidate>Cancel</button><button type="button" class="primary" id="setup-save">Save</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="acct-dlg">
+    <form method="dialog" class="card">
+      <div class="card-title">Accounts</div>
+      <p class="muted small">Several logins per agent, side by side (work, personal…). Each has its own config folder, so each stays signed in. "Default" means the agent's normal login.</p>
+      <div id="acct-list"></div>
+      <div class="row">
+        <select id="acct-agent"><option value="claude">Claude Code</option><option value="codex">Codex</option><option value="opencode">OpenCode</option></select>
+        <input id="acct-name" class="grow" placeholder="Name, e.g. work">
+        <button type="button" id="acct-add" class="primary">Add</button>
+      </div>
+      <div id="acct-error" class="small s-failed"></div>
+      <div class="row"><span class="grow"></span><button value="cancel" formnovalidate>Close</button></div>
     </form>
   </dialog>
 

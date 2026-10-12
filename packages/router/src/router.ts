@@ -23,7 +23,7 @@ const KEYWORDS: Record<Exclude<Category, "code">, string[]> = {
 
 export type Candidate = {
   id: string;
-  agent: "claude" | "codex" | "opencode";
+  agent: "claude" | "codex" | "opencode" | "pi" | "omp";
   model?: string;
   label: string;
   auth: "subscription" | "api_key" | "free";
@@ -31,21 +31,28 @@ export type Candidate = {
   strengths: Partial<Record<Category, number>>;
   /** Relative cost of one task, 0 = included in a subscription. */
   cost: number;
+  /** How heavy the model is (1 = small/cheap, 3 = largest). Budget Dial climbs from 1 to 3. */
+  tier: 1 | 2 | 3;
 };
 
 export const CATALOG: Candidate[] = [
-  { id: "claude-opus", agent: "claude", model: "opus", label: "Claude Code · Opus", auth: "subscription", cost: 0,
+  { id: "claude-opus", agent: "claude", model: "opus", label: "Claude Code · Opus", auth: "subscription", cost: 0, tier: 3,
     strengths: { plan: 3, debug: 3, review: 3, refactor: 3, frontend: 2, test: 2, docs: 2, quick: 0, code: 3 } },
-  { id: "claude-sonnet", agent: "claude", model: "sonnet", label: "Claude Code · Sonnet", auth: "subscription", cost: 0,
+  { id: "claude-sonnet", agent: "claude", model: "sonnet", label: "Claude Code · Sonnet", auth: "subscription", cost: 0, tier: 2,
     strengths: { plan: 2, debug: 2, review: 2, refactor: 2, frontend: 3, test: 3, docs: 3, quick: 2, code: 3 } },
-  { id: "claude-haiku", agent: "claude", model: "haiku", label: "Claude Code · Haiku", auth: "subscription", cost: 0,
+  { id: "claude-haiku", agent: "claude", model: "haiku", label: "Claude Code · Haiku", auth: "subscription", cost: 0, tier: 1,
     strengths: { plan: 0, debug: 1, review: 1, refactor: 0, frontend: 1, test: 1, docs: 2, quick: 3, code: 1 } },
-  { id: "codex", agent: "codex", label: "Codex (ChatGPT plan)", auth: "subscription", cost: 0,
+  { id: "codex", agent: "codex", label: "Codex (ChatGPT plan)", auth: "subscription", cost: 0, tier: 2,
     strengths: { plan: 2, debug: 3, review: 3, refactor: 3, frontend: 2, test: 3, docs: 1, quick: 2, code: 3 } },
   { id: "opencode-deepseek", agent: "opencode", model: "openrouter/~deepseek/deepseek-v4-flash-latest", label: "OpenCode · DeepSeek (OpenRouter)",
-    auth: "api_key", cost: 1, strengths: { plan: 1, debug: 2, review: 1, refactor: 2, frontend: 2, test: 2, docs: 2, quick: 3, code: 2 } },
+    auth: "api_key", cost: 1, tier: 1, strengths: { plan: 1, debug: 2, review: 1, refactor: 2, frontend: 2, test: 2, docs: 2, quick: 3, code: 2 } },
   { id: "opencode-free", agent: "opencode", model: "openrouter/google/gemma-4-31b-it:free", label: "OpenCode · Gemma (free)",
-    auth: "free", cost: 0.5, strengths: { plan: 0, debug: 1, review: 0, refactor: 0, frontend: 1, test: 1, docs: 2, quick: 2, code: 1 } },
+    auth: "free", cost: 0.5, tier: 1, strengths: { plan: 0, debug: 1, review: 0, refactor: 0, frontend: 1, test: 1, docs: 2, quick: 2, code: 1 } },
+  // Pi / Oh My Pi use whatever model you signed in with; small prompt (Pi) or IDE-grade tools (Oh My Pi: LSP, debugger).
+  { id: "pi", agent: "pi", label: "Pi", auth: "subscription", cost: 0, tier: 2,
+    strengths: { plan: 1, debug: 2, review: 2, refactor: 2, frontend: 2, test: 2, docs: 2, quick: 3, code: 2 } },
+  { id: "omp", agent: "omp", label: "Oh My Pi", auth: "subscription", cost: 0, tier: 2,
+    strengths: { plan: 2, debug: 3, review: 2, refactor: 3, frontend: 2, test: 2, docs: 1, quick: 2, code: 3 } },
 ];
 
 // Words that show up in many kinds of tasks count for less.
@@ -61,7 +68,7 @@ export function classify(prompt: string): { category: Category; scores: Record<s
   return { category: n > 0 ? (best as Category) : "code", scores };
 }
 
-export type Availability = { claude: boolean; codex: boolean; opencode: boolean; openrouter: boolean };
+export type Availability = { claude: boolean; codex: boolean; opencode: boolean; openrouter: boolean; pi?: boolean; omp?: boolean };
 
 let availCache: { at: number; v: Availability } | undefined;
 export function detectAvailability(): Availability {
@@ -84,6 +91,8 @@ export function detectAvailability(): Availability {
     codex: onPath("codex") && (existsSync(join(homedir(), ".codex", "auth.json")) || !!process.env.OPENAI_API_KEY),
     opencode: onPath("opencode"),
     openrouter,
+    pi: onPath("pi"),
+    omp: onPath("omp"),
   };
   availCache = { at: Date.now(), v };
   return v;
@@ -107,6 +116,16 @@ export function loadHistory(db: DatabaseSync | undefined, category: Category): H
     for (const r of rows) h.outcomes[r.candidate] = { ok: Number(r.ok), total: Number(r.total) };
   } catch { /* tasks table not created yet */ }
   try {
+    // Quality watch (P01 S2): your own eval results from the last 30 days count like finished tasks.
+    const rows = db.prepare("SELECT candidate, SUM(ok) ok, COUNT(*) total FROM eval_runs WHERE ts > ? GROUP BY candidate")
+      .all(Date.now() - 30 * 24 * 3600_000) as Array<{ candidate: string; ok: number; total: number }>;
+    for (const r of rows) {
+      const o = (h.outcomes[r.candidate] ??= { ok: 0, total: 0 });
+      o.ok += Number(r.ok);
+      o.total += Number(r.total);
+    }
+  } catch { /* no eval_runs table yet */ }
+  try {
     const rows = db
       .prepare("SELECT agent, COUNT(*) n FROM calls WHERE status = 429 AND ts > ? GROUP BY agent")
       .all(Date.now() - 15 * 60_000) as Array<{ agent: string; n: number }>;
@@ -122,7 +141,7 @@ export type Decision = {
   ranked: Array<{ id: string; label: string; score: number }>;
 };
 
-export function decide(prompt: string, opts: { db?: DatabaseSync; availability?: Availability; history?: History } = {}): Decision {
+export function decide(prompt: string, opts: { db?: DatabaseSync; availability?: Availability; history?: History; exclude?: string[] } = {}): Decision {
   const { category } = classify(prompt);
   const avail = opts.availability ?? detectAvailability();
   const hist = opts.history ?? loadHistory(opts.db, category);
@@ -130,10 +149,15 @@ export function decide(prompt: string, opts: { db?: DatabaseSync; availability?:
 
   const usable = CATALOG.filter((c) => {
     if (!avail[c.agent]) return false;
+    if (opts.exclude?.includes(c.agent)) return false; // e.g. hand-off: never back to an agent that already failed
     if (c.agent === "opencode") return avail.openrouter;
     return true;
   });
-  if (!usable.length) throw new Error("No agents available. Install/sign in to claude, codex or opencode.");
+  if (!usable.length) {
+    throw new Error(opts.exclude?.length
+      ? `No other agent available (already tried: ${opts.exclude.join(", ")}).`
+      : "No agents available. Install/sign in to claude, codex or opencode.");
+  }
 
   const ranked = usable
     .map((c) => {
@@ -159,4 +183,18 @@ export function decide(prompt: string, opts: { db?: DatabaseSync; availability?:
     reason: bits.join("; "),
     ranked: ranked.map((r) => ({ id: r.c.id, label: r.c.label, score: r.score })),
   };
+}
+
+/**
+ * Budget Dial (P07 S1): the models to try in order, smallest first. Skips models that are weak at this kind of
+ * task (strength 0). Within a tier: free/subscription before paid, then the stronger one.
+ */
+export function ladder(prompt: string, opts: { availability?: Availability; startAt?: { agent: string; model?: string } } = {}): Candidate[] {
+  const { category } = classify(prompt);
+  const avail = opts.availability ?? detectAvailability();
+  const usable = CATALOG.filter((c) => avail[c.agent] && (c.agent !== "opencode" || avail.openrouter) && (c.strengths[category] ?? 1) > 0);
+  const steps = usable.sort((a, b) => a.tier - b.tier || a.cost - b.cost || (b.strengths[category] ?? 1) - (a.strengths[category] ?? 1));
+  if (!opts.startAt) return steps;
+  const i = steps.findIndex((c) => c.agent === opts.startAt!.agent && (!opts.startAt!.model || c.model === opts.startAt!.model));
+  return i >= 0 ? steps.slice(i) : steps;
 }

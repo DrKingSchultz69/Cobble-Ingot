@@ -1,4 +1,6 @@
-# mm — multimodel workspace
+# Netheron
+
+Multimodel workspace. The command is still `mm`.
 
 One window for Claude Code, Codex and OpenCode (plus OpenRouter models). A router picks the agent and model for each task. Every agent shares one project memory. Research (Perplexity/Consensus style) and learning tools (DeepTutor style) sit in the same window, and it works from your phone.
 
@@ -10,6 +12,16 @@ npm install
 
 ```bash
 npm run serve
+```
+
+## Utility example
+
+The root `utils.ts` module exports a small `hello()` helper:
+
+```ts
+import { hello } from "./utils.ts";
+
+hello(); // "Hello, world!"
 ```
 
 Open the `workspace` link it prints (it contains your access token). Then:

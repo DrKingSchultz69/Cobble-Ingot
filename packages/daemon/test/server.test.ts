@@ -44,14 +44,14 @@ before(async () => {
   g("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "init");
 
   const db = openDb(join(dataDir, "test.db"));
-  tasks = new TaskManager(db, { launcher: () => ({ cmd: process.execPath, args: [agentScript], env: {} }) });
+  tasks = new TaskManager(db, { launcher: () => ({ cmd: process.execPath, args: [agentScript], env: {} }), home: dataDir });
   ({ server } = createWorkspaceServer({ db, token: TOKEN, tasks, previewPort: 0 }));
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
   base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 });
 
-after(() => {
-  tasks.dispose();
+after(async () => {
+  await tasks.dispose();
   server.closeAllConnections();
   server.close();
 });
@@ -82,7 +82,7 @@ test("auth: API needs the token; ?token= sets a cookie and redirects", async () 
 
 test("serves the UI and vendored libraries", async () => {
   const html = await (await api("/")).text();
-  assert.match(html, /mm workspace/);
+  assert.match(html, /<title>Netheron<\/title>/);
   for (const f of ["xterm.js", "xterm.css", "addon-fit.js", "marked.js", "purify.js"]) assert.equal((await api(`/vendor/${f}`)).status, 200, f);
   // Paths outside apps/web never leak files: unknown paths fall back to the app shell.
   assert.doesNotMatch(await (await api("/%2e%2e/package.json")).text(), /"workspaces"/);
@@ -283,4 +283,103 @@ test("connected repo auto-detected: GitHub owner/repo, branch, web link (B-028)"
   assert.equal(info.remote.repo, "proj");
   const dirs = await (await api(`/api/fs/dirs?path=${encodeURIComponent(dir)}`)).json();
   assert.equal(dirs.remote.owner, "group/sub");
+});
+
+test("live diff: file changes are pushed to the Diff tab without asking (B-029)", async () => {
+  const res = await api("/api/tasks", { method: "POST", body: JSON.stringify({ prompt: "live diff check", agent: "claude", repo, isolate: true }) });
+  const task = await res.json();
+  const ws = new WebSocket(`${base.replace("http", "ws")}/ws`, { headers: { cookie: `mm_token=${TOKEN}` } });
+  const diffs: Array<{ files: Array<{ path: string }>; diff: string }> = [];
+  ws.on("message", (raw) => {
+    const m = JSON.parse(String(raw));
+    if (m.t === "diff" && m.id === task.id) diffs.push(m);
+  });
+  await new Promise((r) => ws.once("open", r));
+  ws.send(JSON.stringify({ t: "watch-diff", id: task.id }));
+  await until(() => diffs.length >= 1); // current state right away
+  const before = diffs.length;
+  writeFileSync(join(task.cwd, "live.txt"), "streamed\n");
+  await until(() => diffs.length > before && diffs.at(-1)!.files.some((f) => f.path === "live.txt"));
+  assert.match(diffs.at(-1)!.diff, /\+streamed/);
+  writeFileSync(join(task.cwd, "live.txt"), "streamed\nagain\n");
+  await until(() => /\+again/.test(diffs.at(-1)!.diff));
+  // After unwatch, no more pushes.
+  ws.send(JSON.stringify({ t: "unwatch-diff" }));
+  await new Promise((r) => setTimeout(r, 200));
+  const n = diffs.length;
+  writeFileSync(join(task.cwd, "live2.txt"), "x\n");
+  await new Promise((r) => setTimeout(r, 1000));
+  assert.equal(diffs.length, n);
+  ws.close();
+  await api(`/api/tasks/${task.id}?worktree=1`, { method: "DELETE" });
+});
+
+test("code tab: list, read, save with conflict check; paths can't escape the task folder (B-031)", async () => {
+  const { mkdirSync, symlinkSync, readFileSync } = await import("node:fs");
+  const res = await api("/api/tasks", { method: "POST", body: JSON.stringify({ prompt: "code tab check", agent: "claude", repo, isolate: true }) });
+  const task = await res.json();
+  const root = task.cwd;
+  const j = async (r: Response) => ({ status: r.status, body: await r.json() });
+  mkdirSync(join(root, "src"), { recursive: true });
+  writeFileSync(join(root, "src", "a.ts"), "export const a = 1;\n");
+  writeFileSync(join(root, "bin.dat"), Buffer.from([1, 0, 2]));
+  writeFileSync(join(root, "big.txt"), "x".repeat(2 * 1024 * 1024 + 1));
+
+  const top = (await j(await api(`/api/tasks/${task.id}/files`))).body;
+  assert.ok(top.dirs.some((d: { name: string }) => d.name === "src"));
+  assert.ok(!top.dirs.some((d: { name: string }) => d.name === ".git"));
+  assert.ok(top.files.some((f: { name: string }) => f.name === "README.md"));
+  assert.deepEqual((await j(await api(`/api/tasks/${task.id}/files?dir=src`))).body.files.map((f: { path: string }) => f.path), ["src/a.ts"]);
+
+  const f = (await j(await api(`/api/tasks/${task.id}/file?path=src/a.ts`))).body;
+  assert.equal(f.content, "export const a = 1;\n");
+  const save = (body: object) => api(`/api/tasks/${task.id}/file`, { method: "POST", body: JSON.stringify(body) });
+  const ok = await j(await save({ path: "src/a.ts", content: "export const a = 2;\n", baseHash: f.hash }));
+  assert.equal(ok.status, 200);
+  assert.equal(readFileSync(join(root, "src", "a.ts"), "utf8"), "export const a = 2;\n");
+  // Stale hash (the agent edited after you opened it) -> 409, file untouched; force overrides.
+  const stale = await j(await save({ path: "src/a.ts", content: "mine\n", baseHash: f.hash }));
+  assert.equal(stale.status, 409);
+  assert.match(stale.body.error, /changed on disk/);
+  assert.equal(readFileSync(join(root, "src", "a.ts"), "utf8"), "export const a = 2;\n");
+  assert.equal((await save({ path: "src/a.ts", content: "mine\n", baseHash: f.hash, force: true })).status, 200);
+  // New file: baseHash null.
+  assert.equal((await save({ path: "src/new/b.ts", content: "b\n", baseHash: null })).status, 200);
+  assert.equal(readFileSync(join(root, "src", "new", "b.ts"), "utf8"), "b\n");
+
+  assert.equal((await api(`/api/tasks/${task.id}/file?path=bin.dat`)).status, 415);
+  assert.equal((await api(`/api/tasks/${task.id}/file?path=big.txt`)).status, 413);
+  for (const bad of ["../outside.txt", "src/../../outside.txt", join(root, "README.md"), "C:/Windows/win.ini"]) {
+    assert.equal((await api(`/api/tasks/${task.id}/file?path=${encodeURIComponent(bad)}`)).status, 400, bad);
+    assert.equal((await save({ path: bad, content: "x", baseHash: null })).status, 400, bad);
+  }
+  // A symlink inside the folder that points outside it is refused.
+  const outside = mkdtempSync(join(tmpdir(), "mm-outside-"));
+  writeFileSync(join(outside, "secret.txt"), "s");
+  let linked = false;
+  try { symlinkSync(outside, join(root, "link"), "junction"); linked = true; } catch { /* no symlink rights */ }
+  if (linked) {
+    assert.equal((await api(`/api/tasks/${task.id}/file?path=link/secret.txt`)).status, 400);
+    assert.equal((await save({ path: "link/new.txt", content: "x", baseHash: null })).status, 400);
+  }
+  assert.equal((await fetch(`${base}/api/tasks/${task.id}/files`)).status, 401);
+  assert.equal((await api(`/api/tasks/${task.id}/file`, { method: "POST", body: "{}", headers: { origin: "https://evil.example" } })).status, 403);
+
+  // Monaco is served, and its folder can't be escaped.
+  const loader = await api("/vendor/monaco/vs/loader.js");
+  assert.equal(loader.status, 200);
+  assert.match(await loader.text(), /define|require/);
+  assert.equal((await api("/vendor/monaco/vs/editor/editor.main.js")).status, 200);
+  for (const esc of ["/vendor/monaco/..%2F..%2Fpackage.json", "/vendor/monaco/%2e%2e/%2e%2e/%2e%2e/package.json"]) {
+    const r = await api(esc);
+    assert.doesNotMatch(await r.text(), /"multimodel-management"|"monaco-editor"/, esc); // never a real package.json
+  }
+  await api(`/api/tasks/${task.id}?worktree=1`, { method: "DELETE" });
+});
+
+test("version endpoint tells the page whether mm's code changed since start (B-032)", async () => {
+  const r = await (await api("/api/version")).json();
+  assert.equal(r.stale, false);
+  const { codeChangedSinceStart } = await import("../src/server.ts");
+  assert.equal(codeChangedSinceStart(), false);
 });

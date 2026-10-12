@@ -5,6 +5,19 @@ One entry per problem. Newest at the top.
 
 | ID | Problem | Status |
 |---|---|---|
+| B-041 | **Shared browser, step 1 of 3**: browser core (real Chrome, own profile, hard blocks, take over/resume) | 🟡 Core built + tested; agent tools and UI next |
+| B-040 | **Wave 3**: hash-anchored edits, LSP-lite diagnostics, Pi / Oh My Pi adapters, web push, remote workers | 🟡 Built + tested; phone/real-agent checks pending |
+| B-039 | **Wave 2 #2–#7**: Budget Dial, shared rules, account profiles, Night Shift + pipelines, Race & Judge, quality watch | 🟡 Built + tested; real agents pending |
+| B-038 | **Wave 2 #1**: hand-off to another agent with a briefing (manual + automatic) | 🟡 Built + tested; real agents pending |
+| B-037 | A real Anthropic 429 had no reset hint the parser understood ("reset time unknown") | 🟡 Headers now recorded; parser update after the next real 429 |
+| B-036 | **Wave 1** of the research solutions: safety + cost visibility (11 features) | 🟡 Built + tested; real-agent use pending |
+| B-035 | Product renamed to **Netheron** (was "mm" / Cobble Ingot) | ✅ Visible name |
+| B-034 | No way to see or change whether notifications are on | ✅ |
+| B-033 | Code editor crammed into the right panel; terminal squeezed, tabs scrolled sideways | ✅ Redesigned (VS Code layout) |
+| B-032 | Page newer than the running server → "not found" in the Code tab, with no explanation | ✅ |
+| B-031 | No way to look at or edit a task's files inside mm (IDE request) | ✅ Built (layout replaced by B-033) |
+| B-030 | Removing a task while its agent was running crashed the whole mm server (Windows) | ✅ |
+| B-029 | Diff tab only updated when you clicked Refresh | 🟡 Fixed, needs your check |
 | B-028 | Picking a folder already linked to GitHub didn't show or use its repo | 🟡 Fixed, needs your check |
 | B-027 | No way to work on a GitHub repo by URL; SSH clone fails on this network (port 22 blocked) | 🟡 Feature added; SSH needs your call |
 | B-026 | Workspace UI (4142) wasn't running; only the proxy (4141) was up | ⏸️ Watching |
@@ -19,7 +32,7 @@ One entry per problem. Newest at the top.
 | B-017 | Task prompts cut at the first newline; `" & %` could break the command | ✅ |
 | B-016 | Web page text lost paragraph breaks, so excerpts were always the page top | ✅ |
 | B-015 | `mm run` inside a worktree created a separate memory project | ✅ |
-| B-014 | Claude Code asks "trust this folder?" for every new worktree | ❌ Open — your call |
+| B-014 | Claude Code asks "trust this folder?" for every new worktree | ✅ Option 2 (Wave 1) |
 | B-013 | Codex's shell tool fails on this machine, even without mm | ❌ Open — external |
 | B-012 | PDFs can't be ingested without `pdftotext` | ⏸️ |
 | B-011 | Interactive Codex stuck on "Running hook" | ✅ (explained by B-013) |
@@ -35,6 +48,188 @@ One entry per problem. Newest at the top.
 | B-001 | `npm test` found no tests on Windows | ✅ |
 
 ---
+
+## B-045 — Calmer UI (ADHD-friendly): Home view + 3-step New task
+- **When:** 2026-10-11. Your goal: every feature still there, but not all at once. Your choices: a new **Home** view that opens first and shows only what needs you; New task as steps (**1 What → 2 Who → 3 Extras**). Additions you approved: the list is worked out from live task state (rows leave by themselves), a count on the Home tab, the last agent + model remembered, other views unchanged for now.
+- **Built:**
+  - [index.html](../apps/web/index.html) / [app.js](../apps/web/app.js): **Home** tab with a count badge. Rows, most urgent first: 🌐 asked for you in the browser, ❌ stuck / failed (last 24 h), ⏸ budget reached, ⏸ paused by a usage limit, 💬 waiting for your reply, ✅ done in the last 24 h (review). One button per row opens the task. Below: "N running · N scheduled · N tasks" and one big **＋ New task**. Netheron opens on Home; a `#task=` link still opens that task.
+  - New task wizard: step 1 prompt + project (its own project list, synced with the top bar), step 2 agent, model, account, max $ / min, 🌐; step 3 four closed groups ⏰ When, 👥 Teamwork (race, auto hand-off, pipeline), ✅ Checks, ⚙ Machine & worktree. **▶ Start works on every step.** Step buttons show what's chosen ("2 Who: Codex · 🌐", "3 Extras: 👥✅") so a ticked option is never out of sight.
+- **Bugs found while building (fixed):** on a 375 px phone the top bar was 454 px wide (already too wide before; the Home tab made it worse). The views now scroll sideways inside the bar, and 📁 Add hides on phones (the project list has "+ Add project folder…"). The Checks list stuck out of the side panel.
+- **Not changed yet:** Research, Learn, Memory, Usage, right panel. A calmer Usage page is the next design step.
+- **Verified:** T-UI19 (Chrome, desktop + 375 px).
+
+## B-044 — Shared browser, step 3 of 3: live Browser tab
+- **When:** 2026-10-11. Your choices: a right-side tab, clickable while you have control (so you can log in from the phone), smooth (~10 frames/s). Additions you approved: frames only while the tab is open, your input only while you have control and without the agent's blocks, a Type box for phones, the tab only for 🌐 tasks.
+- **Built:**
+  - [browser.ts](../packages/daemon/src/browser.ts): live view through Chrome's screencast. A frame comes only when the page changes, at most one per 100 ms. Watching never opens a window by itself; frames start when the agent first browses. `userInput()` takes your click, scroll, key or text, and is refused while the agent drives.
+  - [server.ts](../packages/daemon/src/server.ts): WebSocket `watch-browser` / `unwatch-browser` / `browser-input`. A slow connection (phone) skips frames instead of piling them up.
+  - UI: a **🌐 Browser** tab next to Info/Diff/Preview, only on 🌐 tasks. The panel widens while it's open. It shows the page address, who's driving, Show window, Take over and Resume. While you drive, the picture gets an orange frame and takes clicks, double-clicks, scrolling and keys. The Type… box and Enter button are there for phones. The board says "🌐 needs you" (the agent asked) or "🌐 you're driving" (you took over).
+- **Bugs found while building (fixed):** Chrome can have 2 frames in flight, so frames sometimes came 24 ms apart. Netheron now gates them itself and always sends the newest. The board said "needs you" even when you took over yourself.
+- **Not covered:** dragging, right-click, and copy/paste from the picture (use Show window on the PC for those).
+- **Verified:** T-BR-12…14; `npm test` 94/94; `check-all` 49/49.
+
+## B-043 — Shared browser, step 2 of 3: agents can use it
+- **When:** 2026-10-11. Your choices: opt-in per task, and the window stays open after `finish`. Additions you approved: tools go through Netheron's server with the saved token, JPEG screenshots, ask_user → Needs you + 🔔/push, Resume types "Done, continue", Claude doesn't ask per browser click, no browser for Pi/Oh My Pi/Shell.
+- **Built:**
+  - **New task → 🌐 Browser.** The agent gets 10 tools: `browser_screenshot`, `browser_click`, `browser_double_click`, `browser_type_text`, `browser_press_key`, `browser_scroll`, `browser_navigate`, `browser_wait`, `browser_ask_user`, `browser_finish`. Your browsing rules are added to its prompt. ([mcp.ts](../packages/memory/src/mcp.ts), [tasks.ts](../packages/daemon/src/tasks.ts))
+  - Each tool call goes to the server (`/api/tasks/:id/browser…`), which runs it through step 1's blocks and returns a JPEG screenshot. A blocked action reaches the agent as a tool error that says what to do instead. ([server.ts](../packages/daemon/src/server.ts))
+  - `browser_ask_user` → you get the browser, the board shows **🌐 needs you**, and 🔔 + phone push fire. The agent can't act or even take screenshots until you press **Resume**. Resume then types "Done, continue…" into the agent.
+  - **Info tab:** Show window, Take over (any time) and Resume. Chrome starts only when a 🌐 task first uses it. Removing the task closes its window.
+  - Hand-off keeps 🌐 and never picks an agent without MCP.
+- **Known limits:** the blocks stop mistakes, not a hostile agent (it runs as you). If Netheron is closed while its Chrome stays open, the next start can't connect until that Chrome window is closed. There's no live view inside Netheron yet (step 3).
+- **Verified:** 5 new tests (T-BR-6…10), `npm test` 92/92, `check-all` 49/49. Not tried with a real Claude yet (T-BR-11).
+
+## B-042 — Full functionality check script; checkpoint lands just after "idle"
+- **When:** 2026-10-11. You asked for a detailed check of every feature and picked a one-command smoke script that keeps going on failure.
+- **Built:** [check-all.ts](../scripts/check-all.ts). 49 checks in 5 groups through the real API, WebSocket, proxy and MCP process, with a fake model API and a fake agent (TESTS.md section 12). About 50 s, no quota.
+- **Found while running it (known, low impact, not changed):** a task turns **idle** a moment (about 0.1–0.5 s) *before* its "after turn" checkpoint is saved. If a new message reaches the agent and it edits a file inside that gap, the checkpoint already contains the edit, so the edit guard can't flag it and Restore can't undo it. A person can't type that fast. Queued messages wait for the checkpoint. So the gap only hit the script, which typed instantly: 2 of 6 runs failed on the edit-guard check. **Fix in the check:** wait until the checkpoint list stops changing before typing. Possible product fix later: mark the task idle only after the checkpoint is saved.
+- **Script bug fixed:** the MCP path wasn't URL-decoded (the space in "Multimodel Manaagement").
+- **Verified:** 49/49 in 6 runs in a row; `npm test` 87/87.
+
+## B-041 — Shared browser, step 1 of 3: browser core
+- **When:** 2026-10-11. Your design (learning mode): agents work from screenshots with one action per turn; ask_user / Take over hard-blocks the agent in code; Resume hands back; separate Netheron-only Chrome profile; never type passwords, never click pay / place order / buy / delete.
+- **Built:** [browser.ts](../packages/daemon/src/browser.ts). Starts Chrome or Edge with its own profile (`~/.mm/browser-profile`) and drives it over Chrome's DevTools Protocol (no Playwright download). Actions: click, double_click, type_text, press_key, scroll, navigate, wait. Each one returns a fresh screenshot. Screenshot pixels equal click coordinates.
+- **Bugs found while building (fixed):**
+  - Clicking a blank spot was blocked as "Delete": the check read the whole page's text. Now it reads only the clicked button, or a small element's own text.
+  - Screenshots of a background tab took **15 s** (Chrome stops drawing hidden tabs). Chrome's "don't throttle" switches didn't help. **Fix: each task gets its own Chrome window** instead of a tab: 0.08 s.
+- **Not yet:** agents can't call it yet (step 2), and there's no Browser tab in the UI yet (step 3).
+- **Verified:** 4 tests on real headless Chrome; full suite 87/87.
+
+## B-040 — Wave 3: Oh My Pi ideas + reach beyond this PC
+- **When:** 2026-10-10.
+- **Built:**
+  - **P02 S1 · Hash-anchored edits** ([hashline.ts](../packages/memory/src/hashline.ts), idea credit: Oh My Pi). Every agent with MCP gets `mm_read_lines` (lines tagged `12:a3f9|code`) and `mm_edit_lines` (replace/insert by those tags). If the lines changed since the read, the edit is **refused**, so it can't hit the wrong place or wipe a newer change. Keeps CRLF/LF. Can't leave the task folder. For Claude, reading is auto-approved; **editing still asks**, like any edit.
+  - **P32 S1 · LSP-lite** ([diagnostics.ts](../packages/daemon/src/diagnostics.ts)): `mm_diagnostics` runs the project's type checker/linter (typecheck/lint script, `tsc --noEmit`, `cargo check`, `go vet`, `pyflakes`) in the agent's folder and returns real `file:line:col` errors. Code tab → **Check code** shows them as red/yellow squiggles plus a clickable list. (Not a full language server: no go-to-definition yet.)
+  - **P28 S1 · Pi and Oh My Pi adapters:** new agents `pi` and `omp` (credit Mario Zechner / can1357). Launched as `pi [--model m] "prompt"`. They have no MCP, so Netheron puts the project rules **and** shared memory into their first prompt. The router uses them only if installed. Info warns that their usage isn't on the meter (they call providers directly). **Not installed on this PC, so not tried live.**
+  - **P24 S2 · Web push** ([push.ts](../packages/daemon/src/push.ts), [sw.js](../apps/web/sw.js)): 🔔 → **Also when Netheron is closed (push)**. A service worker shows notifications with no Netheron tab open (desktop, or the phone over `mm tunnel` https). Uses VAPID signing, no message payload (the worker fetches the text from Netheron with your login cookie). Dead devices are dropped. No duplicate pop-ups while a tab is open.
+  - **P25 S2 · Remote workers, first slice** ([workers.ts](../packages/daemon/src/workers.ts)): Usage → **Remote workers** → paste another Netheron's link (`http://host:4142/?token=…`, directly, via tunnel, or `ssh -L`). Its tasks show on your board (🖥 column, refreshed every 10 s, "offline" when unreachable). New task → **Run on** that machine. Clicking a remote task opens that machine's Netheron in a new tab for terminal/diff/code. The token stays on the server; the UI never receives it except in that open link.
+- **Not in this slice:** remote terminals inside *this* UI (you use the remote's own tab); full language server (definitions, rename).
+- **Verified:** 83/83 automated tests, twice (T-W3-1…6). The remote-worker test runs two real Netheron servers talking to each other.
+
+## B-039 — Wave 2 #2–#7: the rest of "cross-vendor brains"
+- **When:** 2026-10-09/10, after you asked to implement every feature on the list.
+- **Built (one entry per solution note in `docs/research/solutions/`):**
+  - **Checks** ([verify.ts](../packages/daemon/src/verify.ts)): a project's check command (auto-detected: `npm test`, typecheck/`tsc --noEmit`, `cargo test`, `go test`, `pytest`; or set in ⚙ Worktree setup). New task → **After each turn: run checks**. It runs only if files changed since the last run. Info shows ✓/✗ and has **Run now**.
+  - **P07 · Budget Dial:** **After each turn → Budget Dial** starts on the smallest model that suits the task (model tiers 1–3: Haiku/free/DeepSeek → Sonnet/Codex → Opus). When the checks fail, it hands off one step up the ladder, with the failing output in the briefing. It stops climbing when the checks pass, the budget is reached, or the ladder ends. Info shows the ladder with the current step.
+  - **P26 · Shared rules:** Memory → Add → **rule**. Every agent, whatever its vendor, gets the project's rules at the top of its prompt and in `mm_get_context`. Info lists the exact rules each task received (P26 S2).
+  - **P13 · Account profiles** ([profiles.ts](../packages/daemon/src/profiles.ts)): **👤 Accounts** creates several logins per agent. Each has its own config folder (`CLAUDE_CONFIG_DIR` / `CODEX_HOME` / XDG for OpenCode), so all stay signed in. **Sign in** opens the agent's login inside Netheron. **Use for this project** sets a default; New task has an **Account** picker. A profile for another agent is refused before anything is created. Deleting closes its sign-in terminal and refuses while real tasks use it.
+  - **P23 · Night Shift:** New task → **When: at a time / after the limit resets** (+ every day). Items appear under **Scheduled** on the board (cancel any). Usage → **Brief** shows what ran (overnight by default), with status, cost, checks and alerts.
+  - **P23 · Pipelines:** New task → **Pipeline: Plan → Build → Review** (Claude Opus plans → Codex builds → Claude Sonnet reviews; swaps in what's installed). All steps run in one folder. Each step ends with `STEP DONE` (and passing checks, if on), then hands off with the next instruction. Info shows the steps.
+  - **P34 · Race & Judge:** New task → **Race & Judge**. The same task runs on up to 3 different agents, each in its own worktree. When each has finished a turn, Netheron runs the checks in every folder and scores them: checks pass > smaller change > lower cost. Info shows the table (★ winner); **Keep** removes the others with their worktrees.
+  - **P01 · Quality watch:** Usage → **Quality watch**. Add evals (a small task + a check that only passes when it's done right). **Run** sends each eval to every available model, records pass/fail, and removes the eval tasks again. Shows pass rate per model (30 days, last 5, before). Alert when a model drops ≥ 30 points from ≥ 60%. **The router counts eval results**, so it prefers models that currently pass on *your* code.
+- **Bugs found while building (fixed):**
+  - Scheduler race: overlapping 150 ms ticks could start a scheduled task **twice** (one even after shutdown). Fixed: one scheduler pass at a time, and a task starts only if its claim succeeded. Tested: "started exactly once".
+  - Deleting an account while its sign-in terminal was open failed on Windows (folder in use). Fixed by closing it first.
+  - An invalid profile choice used to be checked after the worktree was made. Fixed: checked first.
+- **Verified:** 76/76 automated tests, twice (T-W2-5…10).
+- **Not yet with real agents:** all of this was tested with fake agents and fake model calls. You're near your weekly Claude limit, so quality watch, races and the dial (which run several agents) haven't been run for real.
+
+## B-038 — Wave 2 #1: hand-off to another agent with a briefing
+- **When:** 2026-10-09. First Wave 2 feature; solves P10 S1 (failover with context) and P46 (Stuck Rescue), both in `docs/research/solutions/`.
+- **What it does:**
+  - **Hand off now** (stuck banner, limit banner) stops the agent and starts a **different** agent in the **same folder and branch**, with a briefing: why it's taking over, the original task, files changed so far, decisions recorded in shared memory, and the last ~25 lines of the previous agent's terminal. "Check the current state, don't start over."
+  - **Auto hand-off** (checkbox under New task): when the task looks stuck or hits a usage limit, this happens by itself. It never goes back to an agent already tried in the chain (router `exclude`). If nobody is left, it posts an alert instead of looping.
+  - The two tasks link to each other (↪ / ↩ banners). Budget and auto hand-off settings carry over.
+  - Removing the first task with its worktree **keeps the folder** while a hand-off task still uses it, and passes ownership (and later cleanup) to that task.
+- **B-037 follow-up:** the proxy now saves a 429's rate-limit headers (`calls.limit_info`), so the next real limit shows exactly what the provider sent and the reset parser can be fixed from that.
+- **Verified:** 69/69 tests, twice (T-W2-1…3). Router exclusion; the briefing contains the original task, reason, changed file, recorded decision and last terminal output; the old agent is stopped; auto hand-off on stuck → codex; codex limited with nobody left → alert, no loop; folder ownership kept on remove.
+- **Not yet with real agents:** you're at 93% of your weekly Claude limit (Claude's own message on 2026-10-09), so no live Claude→Codex hand-off was run. T-W2-4 is open for your next real stuck/limited task.
+
+## B-037 — A real 429 came with no reset time we could read
+- **Found:** 2026-10-09, T-W1-8 (real Claude Haiku task). One call returned 429; the limit alert said "reset time unknown". Claude's own screen showed "93% of your weekly limit · resets Oct 10, 11:30pm".
+- **Why:** the proxy keeps the 429's reset value only if it matches the formats in `ratelimit.ts`; it doesn't record which headers actually arrived, so we can't see what Anthropic sent.
+- **Fix (Wave 2 #1, done):** store the 429's rate-limit headers (names containing ratelimit/retry/reset) with the call, show them in the task's error log, and extend the parser to cover them.
+- **Effect today:** harmless. Claude retried by itself, and Netheron saw the next successful call and cancelled its 5-minute default pause.
+
+## B-036 — Wave 1: safe + cost-visible (from the research solutions)
+- **When:** 2026-10-09. You asked to implement all the solution features. There are 111 options still to build (about 220 working days), so we agreed on waves, highest value first. You chose **Wave 1**.
+- **Built (each linked to its solution note in `docs/research/solutions/`):**
+  - **P02 · Edit guard:** after every agent turn, the folder is compared with the last checkpoint. Flags a file that was emptied, lost ≥ 50% of its lines, or got agent reasoning written into code, and a renamed/missing `.git`. You get a banner + notification with **Restore file** / **Restore whole folder**. [checkpoints.ts](../packages/daemon/src/checkpoints.ts)
+  - **P03 · Checkpoints:** a snapshot at task start and after every turn, stored as hidden git refs (`refs/netheron/<task>/<n>`) built with a temporary index, so the agent's own index, branch and stash are never touched. Byte-exact (no CRLF conversion). Restoring takes a safety checkpoint first. Keeps the last 50. Deleted when the task is removed.
+  - **P07/P08 · Alarms:** a task burning > 3M tokens or > $2 in 5 minutes; an agent's prompt-cache hit rate falling from ≥ 50% to < 20%; a subscription agent suddenly billed to an API key (planned failovers excluded); a rate limit hit, with its reset time. Each has a cool-down, shows as a notification, and is listed in Usage → **Alerts**. [alarms.ts](../packages/daemon/src/alarms.ts)
+  - **P09 · Live meter + reset times:** the pane header shows tokens in/out, cost, context size and tokens/second live; Info shows the full meter. The proxy now reads reset hints from 429 responses (`retry-after`, `*-reset` as epoch, ISO date or `6m0s`-style durations). [ratelimit.ts](../packages/daemon/src/ratelimit.ts)
+  - **P10 · Pause until the limit resets:** when a task hits a 429 with no failover, it waits and, at the reset time, asks the agent to continue (**Don't resume** cancels).
+  - **P46 · Budget + stuck detection:** optional max $ / max minutes per task. When reached, the agent is interrupted once (Esc) and you're asked. "Looks stuck" means 5 failed calls in 5 minutes, or no successful model call for 10 minutes while running. It shows a **Hand off to another agent** button that pre-fills a hand-off to a different agent.
+  - **P20 · Message queue:** follow-ups wait in a per-task queue and are sent when the agent is free (sent right away if it's already waiting). Unsent ones can be removed.
+  - **P36 · Diff comments + receipt:** click any line in the Diff tab to send a comment to the agent (queued if it's busy). **Receipt** per task: duration, cost, files, models, memory records, alerts, checkpoints, messages, with **Copy as Markdown**.
+  - **P35 · Worktree setup recipe:** per project, files to copy (default: root `.env*`), folders to link (default: `node_modules`, as a junction) and an optional command, run when a task's worktree is created. Links are removed before a worktree is deleted, so deleting can never reach into your main checkout. **⚙ Worktree setup** under New task. [setup.ts](../packages/daemon/src/setup.ts)
+  - **P44 / B-014 · Claude pre-trust (option 2):** Netheron marks only its own worktree folders as trusted in `~/.claude.json`: one-time backup (`.claude.json.netheron-backup`), re-read right before writing, temp file + rename, retries if Claude wrote meanwhile, never writes if the file isn't valid JSON. The entry is removed again with the worktree. [trust.ts](../packages/daemon/src/trust.ts)
+- **Bug found while building:** the server tests ran fake "claude" tasks and wrote their temp folders into the **real** `~/.claude.json`. They removed them again (0 left; checked), but a backup file was created. Fix: tests use their own home folder, and Netheron never writes Claude trust during a test run unless a test home is given.
+- **Verified:**
+  - 66/66 automated tests, twice (T-W1-1…7).
+  - Chrome on an isolated test copy (own data folder, ports 5141–5143), with a shell task in a scratch repo. The emptied `app.ts` was flagged → **Restore file** → back to 30 lines on disk. The queued message was delivered and ran. A diff comment on `app.ts:31` was queued while busy, then delivered. The receipt, setup dialog defaults and Usage alerts all rendered.
+- **Not yet seen with real agents:** live meter values, budget/stuck/limit banners and the Claude trust skip were tested with a fake agent and fake model calls, not with real Claude/Codex sessions.
+
+## B-035 — Product renamed to Netheron
+- **When:** 2026-10-08. You picked **Netheron** after comparing Minecraft-style names (Wispcraft, Glint, Kiln and Mending were taken or clashed).
+- **Availability (registry lookups, 2026-10-08):** netheron.dev / .app / .io / .ai unregistered, .com taken. npm `netheron` free. GitHub `netheron` taken; `netheronhq` and `getnetheron` free. Prices weren't checked.
+- **Changed (visible name only):** browser title, the top-bar logo (**N** + "Netheron"), the app manifest and icon, notification titles, the restart banner, other UI messages, the login page, the preview messages, the CLI help header and the README title. The launcher is now **`start-netheron.cmd`**; `start-mm.cmd` was removed.
+- **Not changed, on purpose:** the `mm` command, `MM_*` settings, the data folder, the `mm_token` cookie, `mm/…` task branches, and the agents' memory tools `mm_get_context` / `mm_record`. Renaming those would move your data, log you out, and require reconfiguring agents. That's a separate decision, about 2 h.
+- **Verified:** 59 of 59 tests pass; the UI test now checks the `Netheron` title.
+
+## B-034 — No way to see or change whether notifications are on
+- **Found:** 2026-10-08. You asked "where is the notification".
+- **What:** mm only asked for permission once, on the first **Start**. Nothing showed whether notifications were on, blocked or muted, and there was no way to test them.
+- **Fix:** A **🔔 button** in the top bar, next to the connection dot.
+  - It's coloured when on, grey when off, with a blue dot for "not asked yet" and a red dot for "blocked".
+  - Click it for a menu with the status in plain words, **Turn on / Mute**, and **Send test**.
+  - When blocked, it says how to unblock (address-bar icon → Notifications → Allow).
+  - On the phone over Wi-Fi (plain http), it says notifications aren't possible there: browsers require https or localhost.
+  - Clicking a notification jumps to its task.
+  - Mute is mm's own setting, so you don't need to touch the browser.
+  - On Android, where the browser refuses page notifications, it says so instead of failing silently.
+- **Verified:** In Chrome on your mm (:4142), the state showed **on** (your Chrome had already allowed it). The menu opens, stays open when you click inside, and closes when you click outside. Mute → `muted` with the test button disabled; Turn on → back to `on`. **Send test** created a real notification. You confirmed the Windows pop-up appeared.
+
+## B-033 — Code editor crammed into the right panel
+- **Found:** 2026-10-08, by you (screenshot): "very buggy… design it to work smoothly".
+- **What:** The editor lived in the right panel at 55% width. That squeezed the agent's terminal to about 500 px, pushed the task tabs into a scrollbar, and left the editor itself narrow. My design mistake.
+- **Fix (you chose VS Code style):**
+  - A **Terminal / Code** switch in the task tab bar.
+  - Code mode fills the main area: **Explorer** (folder tree with ›/⌄ arrows), **file tabs** (● when unsaved, × to close, middle-click closes), a breadcrumb, Monaco with a minimap, and the **agent's terminal underneath**. Drag the terminal's bar to resize it, or click "Terminal" to fold it. Both are remembered.
+  - **◧ / ◨ buttons** hide the task list and the Info/Diff panel. Code mode hides the right panel by default, so the editor goes from about 450 px to about 1000 px on your screen.
+  - Each task keeps its own open files, cursor positions and open folders when you switch tasks.
+  - The phone gets a ☰ button for the Explorer.
+  - The Code tab was removed from the right panel, which is back to Info / Diff / Preview.
+- **Verified in Chrome at 1536 px** (test copy on :5142):
+  - Opened `src/math.ts` and `README` as two tabs, with TypeScript colours.
+  - Dragging the terminal bar resized it. Typing showed ●, Ctrl+S saved, and the file on disk had the new line.
+  - Switching to Terminal mode kept the session: `echo terminal-ok` ran.
+
+## B-032 — Page newer than the running server: "not found" with no explanation
+- **Found:** 2026-10-08. Your Code tab showed "not found" because your mm started at 00:17 and the file API was added at 00:21. The browser always loads the newest page, but the server only picks up new code when it restarts.
+- **Fix:** The server fingerprints its own source files at startup. `GET /api/version` returns `stale: true` once they change. The page checks on every connect and once a minute, and shows a yellow banner: "mm was updated… close the start-mm window and open it again". A server too old to have `/api/version` also triggers the banner. The file tree shows the same hint instead of "not found".
+- **Verified:** T-I16. Your current mm answers `/api/version` with "not found", which triggers the banner.
+
+## B-031 — Code tab: a light VS Code editor (Monaco) inside mm
+- **Found:** 2026-10-08. You asked about putting an IDE in mm (a VS Code fork). You chose the light editor over full VS Code in a tab or an "Open in Cursor" button, because memory is tight (3 GB free).
+- **Built (first version; the layout was replaced by B-033):**
+  - New **Code** tab next to Info / Diff / Preview: file tree of the focused task's folder, plus Monaco (VS Code's editor component) with syntax colours.
+  - **Save** or **Ctrl+S**. A ● dot means unsaved. The right panel widens to 55% while the tab is open.
+  - Monaco only loads the first time you open the tab. It's served from `node_modules/monaco-editor/min` (0.57) via `/vendor/monaco/`, which can't be escaped.
+  - Server: [files.ts](../packages/daemon/src/files.ts), with `GET /api/tasks/:id/files`, `GET /api/tasks/:id/file` and `POST /api/tasks/:id/file`.
+  - Every path is checked against the task folder, including through symlinks and junctions. `.git` is hidden. Binary files and files over 2 MB are refused.
+  - **Saves never overwrite an agent's newer edit:** a save includes the hash of the version you opened, and the server answers 409 if the file changed since.
+- **Live with agents:** it uses the same live feed as the Diff tab (B-029).
+  - When an agent edits the open file, the editor reloads it by itself and keeps your scroll position.
+  - If you have unsaved edits, a bar offers **Reload theirs / Keep mine** instead.
+  - New or deleted files show up in the tree, and open folders stay open.
+- **Verified:**
+  - T-I15 (automated). The server test file passed 3 of 3 runs.
+  - In Chrome on a test copy (ports 5142): the tree loaded, a `.ts` file showed with TypeScript colours, an agent-style disk edit reloaded the editor by itself, and a new file appeared in the tree.
+  - With an unsaved edit, the agent edit showed the conflict bar instead. **Keep mine** saved your version to disk.
+
+## B-030 — Removing a running task crashed the whole mm server (Windows)
+- **Found:** 2026-10-07, while testing B-029. Running the server tests repeatedly failed 3 of 4 times with exit code `0xC0000374` (heap corruption).
+- **What:** Clicking **Remove** on a task whose agent was still running could kill the entire `mm serve` process. Every other task and terminal went down with it.
+- **Cause:** Remove called `kill()` on the terminal, then immediately called `kill()` again and closed its pipes while Windows (ConPTY) was still shutting the process down. node-pty corrupts memory when that happens. The old tests always told the fake agent to quit before removing it, so they never hit this.
+- **Fix:** [pty.ts](../packages/daemon/src/pty.ts) kills a live process at most once. `destroy()` waits for the process to exit (up to 3 s) before releasing its handles. Remove waits for that before deleting the worktree. Shutdown (`Ctrl+C`) waits for all terminals, with a 4 s cap.
+- **Also found:** without the final release step, the daemon couldn't exit at all (the same pipe leak as B-021). That step now runs only after the process has exited.
+- **Verified:** 6 of 6 repeated runs pass (it crashed in 3 of 4 runs before). The B-029 test removes a running task.
+
+## B-029 — Diff tab only updated when you clicked Refresh
+- **Found:** 2026-10-07, your request: changes should show in the diff automatically, like streaming.
+- **Fix:** The Diff tab now subscribes over the existing WebSocket. The server watches the task's folder ([diffwatch.ts](../packages/daemon/src/diffwatch.ts)) and recomputes the diff 0.3 s after files stop changing. It pushes the diff only when it actually changed. The tab keeps your scroll position and shows `● live · <time>`. One watcher per task is shared by every open browser and stops when nobody is viewing. It skips `node_modules`, `.git/objects`, `dist` and `build`, and falls back to checking every 3 s if the folder can't be watched. The Refresh button is gone.
+- **Verified:** T-I14: writing a file into the task folder pushes a diff with the new line, a second edit pushes again, and nothing more arrives after unwatching. Needs your check in the browser (T-UI14).
 
 ## B-028 — A folder already linked to GitHub wasn't recognised
 - **Found:** 2026-10-07. You asked that a folder already connected to GitHub be detected and set up automatically.
@@ -125,7 +320,7 @@ One entry per problem. Newest at the top.
   1. Leave it. One keypress per task, and Claude's safety check stays intact. **← current**
   2. Have mm mark worktree folders as trusted in `~/.claude.json` before launch. That removes the prompt, but mm would be editing Claude's own config file while other Claude sessions write to it (risk of corrupting it).
   3. Reuse a few long-lived worktree folders instead of one per task.
-- **Needs your decision:** reply with 1, 2 or 3.
+- **Decision (2026-10-09):** option 2, as part of Wave 1 (B-036): only Netheron's own worktrees, with backup, atomic write and cleanup.
 
 ## B-013 — Codex's shell tool fails on this machine, even without mm
 - **What:** Codex fails every shell command with "Failed to create unified exec process" / "code-mode host closed its stdout". Its MCP tools work.

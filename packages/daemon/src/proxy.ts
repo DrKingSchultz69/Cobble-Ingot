@@ -2,6 +2,7 @@ import { createServer, type IncomingMessage, type Server } from "node:http";
 import type { DatabaseSync } from "node:sqlite";
 import { costFor, UPSTREAMS } from "./config.ts";
 import { logCall } from "./db.ts";
+import { limitHeaders, parseReset } from "./ratelimit.ts";
 import { parseUsage } from "./usage.ts";
 
 const MAX_CAPTURE = 8 * 1024 * 1024;
@@ -90,7 +91,7 @@ export function createProxy(db: DatabaseSync, upstreams = UPSTREAMS, env: NodeJS
       const fb = upstream.status === 429 && auth === "subscription" ? fallbackFor(r.provider, env) : undefined;
       if (fb) {
         // Log the rejected subscription call, then retry on the API key.
-        logCall(db, row(r, { provider: r.provider, auth, model: reqModel, path: subPath, status: 429, started, u: emptyUsage() }));
+        logCall(db, { ...row(r, { provider: r.provider, auth, model: reqModel, path: subPath, status: 429, started, u: emptyUsage() }), reset_at: parseReset(upstream.headers), limit_info: limitHeaders(upstream.headers) });
         await upstream.body?.cancel();
         used = { provider: fb.provider, path: fb.upstreamPath(subPath), auth: "api_key", failover: true };
         upstream = await send(fb.provider, used.path, fb.headers);
@@ -122,7 +123,12 @@ export function createProxy(db: DatabaseSync, upstreams = UPSTREAMS, env: NodeJS
 
     const u = parseUsage(Buffer.concat(chunks).toString("utf8"));
     if (u.input || u.output || u.cacheRead || u.cacheWrite || upstream.status >= 400) {
-      logCall(db, row(r, { provider: used.provider, auth: used.auth, model: u.model || reqModel, path: used.path, status: upstream.status, started, u }));
+      logCall(db, {
+        ...row(r, { provider: used.provider, auth: used.auth, model: u.model || reqModel, path: used.path, status: upstream.status, started, u }),
+        reset_at: upstream.status === 429 ? parseReset(upstream.headers) : 0,
+        limit_info: upstream.status === 429 ? limitHeaders(upstream.headers) : "",
+        failover: used.failover ? 1 : 0,
+      });
     }
   });
 }

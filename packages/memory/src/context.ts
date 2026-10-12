@@ -3,7 +3,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { findNode, link, recent, search, upsertNode } from "./graph.ts";
 import { renderTree } from "./indexer.ts";
 
-export const RECORD_KINDS = ["decision", "note", "bug", "outcome", "todo"] as const;
+export const RECORD_KINDS = ["decision", "note", "bug", "outcome", "todo", "rule"] as const;
 export type RecordKind = (typeof RECORD_KINDS)[number];
 
 export function projectFiles(db: DatabaseSync, project: string): string[] {
@@ -17,6 +17,12 @@ export function buildContext(db: DatabaseSync, project: string, query = "", opts
   const proj = findNode(db, "project", project);
   out.push(`# Shared project memory${proj ? ` — ${proj.title}` : ""}`);
   if (!proj) out.push("_Project not indexed yet. Call mm_index or ask the user to index it in the workspace._");
+
+  const rules = projectRules(db, project);
+  if (rules.length) {
+    out.push("\n## Project rules (always follow these; written once for every agent)");
+    for (const r of rules) out.push(`- ${r.title}${r.body ? ` — ${oneLine(r.body, 300)}` : ""}`);
+  }
 
   if (opts.taskId) {
     const task = findNode(db, "task", opts.taskId);
@@ -48,6 +54,19 @@ export function buildContext(db: DatabaseSync, project: string, query = "", opts
 
   out.push("\nRecord important decisions, bugs and outcomes with the mm_record tool so other agents can use them.");
   return out.join("\n");
+}
+
+/** Rules/skills written once in shared memory and given to every agent (P26 S1). Newest first, max 40. */
+export function projectRules(db: DatabaseSync, project: string): Array<{ id: number; title: string; body: string }> {
+  return db.prepare("SELECT id, title, body FROM nodes WHERE kind = 'rule' AND project = ? ORDER BY updated DESC LIMIT 40").all(project) as Array<{ id: number; title: string; body: string }>;
+}
+
+/** The rules block put at the start of an agent's prompt. "" when the project has none. */
+export function rulesPreamble(db: DatabaseSync, project: string): { text: string; ids: number[] } {
+  const rules = projectRules(db, project);
+  if (!rules.length) return { text: "", ids: [] };
+  const lines = rules.map((r) => `- ${r.title}${r.body ? `: ${oneLine(r.body, 300)}` : ""}`);
+  return { text: `Project rules (from Netheron shared memory; follow them):\n${lines.join("\n")}`, ids: rules.map((r) => r.id) };
 }
 
 export function record(

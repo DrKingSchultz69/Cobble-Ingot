@@ -13,8 +13,8 @@ export type PtySession = {
   buffer(): string;
   subscribe(fn: (data: string) => void): () => void;
   onExit(fn: (code: number) => void): void;
-  /** Kill the process and release the terminal's pipes even if it already exited. */
-  destroy(): void;
+  /** Kill the process, wait for it to exit, then release the terminal's pipes. */
+  destroy(): Promise<void>;
   readonly lastOutputAt: number;
   readonly alive: boolean;
 };
@@ -30,6 +30,9 @@ export function spawnPty(id: string, launch: Launch, cwd: string, env: Record<st
   let buf = "";
   let last = Date.now();
   let alive = true;
+  let killed = false;
+  let markExited: () => void = () => {};
+  const exited = new Promise<void>((r) => (markExited = r));
   const subs = new Set<(d: string) => void>();
   const exits: Array<(c: number) => void> = [];
 
@@ -41,6 +44,7 @@ export function spawnPty(id: string, launch: Launch, cwd: string, env: Record<st
   });
   p.onExit(({ exitCode }) => {
     alive = false;
+    markExited();
     for (const e of exits) e(exitCode);
   });
 
@@ -50,14 +54,26 @@ export function spawnPty(id: string, launch: Launch, cwd: string, env: Record<st
     resize: (c, r) => {
       if (alive && c > 0 && r > 0) p.resize(Math.min(c, 500), Math.min(r, 200));
     },
+    // Kill at most once: a second kill (or closing pipes) while ConPTY is still shutting down
+    // corrupts the heap on Windows and takes the whole daemon down (B-030).
     kill: () => {
-      if (alive) p.kill();
+      if (!alive || killed) return;
+      killed = true;
+      try { p.kill(); } catch { /* already gone */ }
     },
-    destroy: () => {
+    destroy: async () => {
       subs.clear();
+      if (alive && !killed) {
+        killed = true;
+        try { p.kill(); } catch { /* already gone */ }
+      }
+      await Promise.race([exited, new Promise((r) => setTimeout(r, 3000))]);
+      // Once the process is gone, kill() is safe again and releases ConPTY's handles (else the daemon can't exit).
       try { p.kill(); } catch { /* already gone */ }
       // node-pty (ConPTY on Windows) can keep its pipes open after exit; close them so the process can exit.
-      for (const k of ["_socket", "_inSocket", "_outSocket"]) (p as unknown as Record<string, { destroy?: () => void }>)[k]?.destroy?.();
+      for (const k of ["_socket", "_inSocket", "_outSocket"]) {
+        try { (p as unknown as Record<string, { destroy?: () => void }>)[k]?.destroy?.(); } catch { /* closed */ }
+      }
     },
     buffer: () => buf,
     subscribe: (fn) => {

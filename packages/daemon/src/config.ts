@@ -3,6 +3,7 @@ import { join } from "node:path";
 
 export const PORT = Number(process.env.MM_PORT ?? 4141);
 export const HOST = "127.0.0.1";
+export const UI_PORT = Number(process.env.MM_UI_PORT ?? 4142);
 export const DATA_DIR = process.env.MM_DATA_DIR ?? join(homedir(), ".mm");
 export const DB_PATH = join(DATA_DIR, "mm.db");
 

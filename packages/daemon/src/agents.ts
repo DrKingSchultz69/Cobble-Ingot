@@ -2,11 +2,16 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { DATA_DIR, HOST, PORT } from "./config.ts";
+import { BROWSER_TOOL_NAMES } from "../../memory/src/mcp.ts";
+import { DATA_DIR, HOST, PORT, UI_PORT } from "./config.ts";
 
 export type Launch = { cmd: string; args: string[]; env: Record<string, string> };
 
-export const AGENTS = ["claude", "codex", "opencode", "shell"] as const;
+export const AGENTS = ["claude", "codex", "opencode", "pi", "omp", "shell"] as const;
+/** Agents without MCP support: shared memory and rules go into their prompt instead (P28). */
+export const NO_MCP = new Set(["pi", "omp"]);
+/** Agents that call providers directly: their usage isn't seen by Netheron's proxy. */
+export const UNTRACKED = new Set(["pi", "omp"]);
 export type AgentName = (typeof AGENTS)[number];
 
 export type LaunchOpts = {
@@ -21,6 +26,10 @@ export type LaunchOpts = {
   lean?: boolean;
   /** Attach the shared-memory MCP server (default true). */
   memory?: boolean;
+  /** The agent's working folder (worktree): where mm_read_lines / mm_edit_lines operate. */
+  cwd?: string;
+  /** Shared browser ticked for this task: the MCP server also offers browser_* tools. */
+  browser?: boolean;
 };
 
 const base = (tag: string, provider: string) => `http://${HOST}:${PORT}/a/${tag}/${provider}`;
@@ -32,6 +41,8 @@ function mcpEnv(agent: string, o: LaunchOpts): Record<string, string> {
   const env: Record<string, string> = { MM_AGENT: agent, MM_DATA_DIR: fwd(DATA_DIR) };
   if (o.project) env.MM_PROJECT = fwd(o.project);
   if (o.taskId) env.MM_TASK_ID = o.taskId;
+  if (o.cwd) env.MM_WORKDIR = fwd(o.cwd);
+  if (o.browser) Object.assign(env, { MM_BROWSER: "1", MM_API: `http://${HOST}:${UI_PORT}` });
   return env;
 }
 
@@ -50,9 +61,12 @@ export function launchFor(agent: string, userArgs: string[], o: LaunchOpts = {})
         mkdirSync(dir, { recursive: true });
         const file = join(dir, `${o.taskId ?? "claude"}.json`);
         writeFileSync(file, JSON.stringify({ mcpServers: { mm: { command: NODE, args: [MCP_BIN], env: menv } } }, null, 2));
-        // Our memory tools are safe to call without a prompt; file edits and shell still ask as usual.
+        // Our memory/read tools are safe to call without a prompt. mm_edit_lines changes files, so it asks like any edit.
         const settings = join(dir, `${o.taskId ?? "claude"}.settings.json`);
-        writeFileSync(settings, JSON.stringify({ permissions: { allow: ["mcp__mm"] } }));
+        // Browser tools (opt-in tasks only) are pre-approved too: the user ticked 🌐 and Netheron's hard blocks run in code.
+        const safeTools = ["mm_get_context", "mm_search", "mm_record", "mm_tree", "mm_node", "mm_index", "mm_read_lines", "mm_diagnostics",
+          ...(o.browser ? BROWSER_TOOL_NAMES : [])].map((t) => `mcp__mm__${t}`);
+        writeFileSync(settings, JSON.stringify({ permissions: { allow: safeTools } }));
         args.push("--mcp-config", fwd(file), "--settings", fwd(settings));
         if (o.lean) args.push("--strict-mcp-config");
       }
@@ -98,6 +112,17 @@ export function launchFor(agent: string, userArgs: string[], o: LaunchOpts = {})
       args.push(...userArgs);
       if (o.prompt) args.push("--prompt", o.prompt);
       return { cmd: "opencode", args, env: { OPENCODE_CONFIG_CONTENT: JSON.stringify(config) } };
+    }
+
+    // Pi (badlogic/pi, credit Mario Zechner) and Oh My Pi (can1357/oh-my-pi): `pi [--model m] "prompt"`.
+    // They sign in with /login (Claude/ChatGPT/Copilot subscriptions) and call providers directly.
+    case "pi":
+    case "omp": {
+      const args: string[] = [];
+      if (o.model) args.push("--model", o.model);
+      args.push(...userArgs);
+      if (o.prompt) args.push(o.prompt);
+      return { cmd: agent, args, env: {} };
     }
 
     case "shell":
