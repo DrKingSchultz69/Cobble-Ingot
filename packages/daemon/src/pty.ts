@@ -17,10 +17,25 @@ export type PtySession = {
   destroy(): Promise<void>;
   readonly lastOutputAt: number;
   readonly alive: boolean;
+  /** Process id of the terminal's root process (cmd.exe / sh), for the resource manager. */
+  readonly pid: number;
 };
 
+// Markers a parent Claude Code session puts in its children's environment. If Netheron itself was started from a
+// Claude Code terminal they would leak into every agent, and Claude Code then treats the agent as a sub-session:
+// it stops saving its transcript, which is where Netheron reads subscription usage from (sessionlogs.ts).
+const PARENT_SESSION_VARS = ["CLAUDECODE", "CLAUDE_CODE_CHILD_SESSION", "CLAUDE_CODE_SESSION_ID", "CLAUDE_CODE_SESSION_ATTENDED",
+  "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_EXECPATH", "CLAUDE_CODE_MESSAGING_SOCKET", "CLAUDE_CODE_MESSAGING_TOKEN", "CLAUDE_PID", "CLAUDE_EFFORT"];
+
+/** The environment an agent starts with: Netheron's own, minus a parent Claude Code session's markers, plus the launch's. */
+export function agentEnv(launch: Launch, env: Record<string, string>, base: NodeJS.ProcessEnv = process.env): Record<string, string> {
+  const inherited = { ...base };
+  for (const k of PARENT_SESSION_VARS) delete inherited[k];
+  return { ...inherited, ...launch.env, ...env, TERM: "xterm-256color", COLORTERM: "truecolor" } as Record<string, string>;
+}
+
 export function spawnPty(id: string, launch: Launch, cwd: string, env: Record<string, string>): PtySession {
-  const fullEnv = { ...process.env, ...launch.env, ...env, TERM: "xterm-256color", COLORTERM: "truecolor" } as Record<string, string>;
+  const fullEnv = agentEnv(launch, env);
   // Windows: run through cmd.exe so .cmd shims resolve. node-pty takes a raw command line string here.
   const p =
     process.platform === "win32"
@@ -87,5 +102,6 @@ export function spawnPty(id: string, launch: Launch, cwd: string, env: Record<st
     get alive() {
       return alive;
     },
+    pid: p.pid,
   };
 }

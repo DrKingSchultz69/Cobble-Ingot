@@ -17,6 +17,7 @@ import { spawnPty, type PtySession } from "./pty.ts";
 import { applyRecipe, ensureSetupSchema, getRecipe, removeLinks } from "./setup.ts";
 import { deleteProfile, ensureProfileSchema, getProfile, loginCommand, profileDir, projectProfiles } from "./profiles.ts";
 import { trustClaudeFolder, untrustClaudeFolder } from "./trust.ts";
+import { SessionLogReader } from "./sessionlogs.ts";
 import { runVerify, type VerifyResult } from "./verify.ts";
 import { createWorktree, isGitRepo, removeWorktree, repoRoot, slugify, worktreeDiff } from "./worktree.ts";
 
@@ -125,6 +126,8 @@ export type NewTask = {
   pipeline?: { steps: PipelineStep[]; index: number };
   /** Shared browser (opt-in): the agent gets browser_* tools and its own Chrome window. */
   browser?: boolean;
+  /** Resume a past Claude / Codex session (its id) in the folder it ran in, instead of starting fresh. */
+  resume?: string;
 };
 
 export type QueuedMessage = { id: number; task: string; text: string; created: number; sent: number };
@@ -181,6 +184,9 @@ export function ensureTaskSchema(db: DatabaseSync): void {
       "when" TEXT NOT NULL DEFAULT 'at', created INTEGER NOT NULL, last_task TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'waiting',
       title TEXT NOT NULL DEFAULT ''
     );
+    CREATE TABLE IF NOT EXISTS schedule_runs (
+      id INTEGER PRIMARY KEY, schedule_id INTEGER NOT NULL, task TEXT NOT NULL DEFAULT '', ts INTEGER NOT NULL, error TEXT NOT NULL DEFAULT ''
+    );
     CREATE TABLE IF NOT EXISTS task_queue (
       id INTEGER PRIMARY KEY, task TEXT NOT NULL, text TEXT NOT NULL, created INTEGER NOT NULL, sent INTEGER NOT NULL DEFAULT 0
     );
@@ -205,9 +211,23 @@ export function ensureTaskSchema(db: DatabaseSync): void {
   db.prepare("UPDATE tasks SET status = 'stopped', wait_until = 0, updated = ? WHERE status IN ('starting','running','idle')").run(Date.now());
 }
 
+export const REPEATS = ["hourly", "daily", "weekdays", "weekly"] as const;
+/** The next run of a repeating automation after `prev`. Slots missed while Netheron was off are skipped, not caught up. */
+export function nextRun(repeat: string, prev: number, now = Date.now()): number {
+  const step = repeat === "hourly" ? 3600_000 : repeat === "weekly" ? 7 * 86_400_000 : 86_400_000;
+  let t = prev;
+  do {
+    t += step;
+    if (repeat === "weekdays") while ([0, 6].includes(new Date(t).getDay())) t += 86_400_000;
+  } while (t <= now);
+  return t;
+}
+
 export class TaskManager extends EventEmitter {
   private sessions = new Map<string, PtySession>();
   private db: DatabaseSync;
+  /** Usage of subscription logins, read from the CLIs' own session logs (they never pass the proxy). */
+  private logs: SessionLogReader;
   private launcher: (agent: string, o: Parameters<typeof launchFor>[2]) => Launch;
   private idleTimer: NodeJS.Timeout;
   private home?: string;
@@ -228,6 +248,7 @@ export class TaskManager extends EventEmitter {
     ensureGraphSchema(db);
     ensureSetupSchema(db);
     ensureProfileSchema(db);
+    this.logs = new SessionLogReader(db);
     this.launcher = opts.launcher ?? ((agent, o) => launchFor(agent, [], o));
     this.idleTimer = setInterval(() => this.tick(), opts.tickMs ?? 2_000);
     this.idleTimer.unref();
@@ -252,7 +273,8 @@ export class TaskManager extends EventEmitter {
 
   async create(input: NewTask): Promise<Task> {
     const prompt = input.prompt.trim();
-    if (!prompt && input.agent !== "shell") throw new Error("prompt is required");
+    if (!prompt && input.agent !== "shell" && !input.resume) throw new Error("prompt is required");
+    if (input.resume && !["claude", "codex"].includes(input.agent ?? "")) throw new Error("only Claude and Codex sessions can be resumed");
     if (!input.repo || !existsSync(input.repo)) throw new Error(`project folder not found: ${input.repo}`);
     let repo = resolve(input.repo);
     const git = await isGitRepo(repo);
@@ -317,6 +339,8 @@ export class TaskManager extends EventEmitter {
       // Hand-off: same folder and branch as the previous agent. The folder stays owned by the first task.
       cwd = from.cwd;
       branch = from.branch;
+    } else if (input.resume) {
+      cwd = resolve(input.repo); // a session belongs to the exact folder it ran in
     } else if (git && input.isolate !== false && agent !== "shell") {
       const wt = await createWorktree(repo, `${slugify(title, 24)}-${id}`);
       cwd = wt.path;
@@ -377,8 +401,9 @@ export class TaskManager extends EventEmitter {
     if (profile) this.db.prepare("UPDATE tasks SET profile = ? WHERE id = ?").run(profile.id, id);
     if (input.browser) this.db.prepare("UPDATE tasks SET browser = 1 WHERE id = ?").run(id);
 
-    const launched = this.launcher(agent, { taskId: id, project: repo, cwd, model: model || undefined, prompt: fullPrompt || undefined, lean: !!input.lean, browser: !!input.browser });
+    const launched = this.launcher(agent, { taskId: id, project: repo, cwd, model: model || undefined, prompt: fullPrompt || undefined, lean: !!input.lean, browser: !!input.browser, env: profile?.env, resume: input.resume });
     const launch = profile ? { ...launched, env: { ...launched.env, ...profile.env } } : launched;
+    if (launch.logs) this.logs.add({ task: id, agent: launch.logs.agent, home: launch.logs.home, cwd, since: now - 5_000 });
     if (from?.worktree && agent === "claude" && (this.home || !process.env.NODE_TEST_CONTEXT)) {
       if (trustClaudeFolder(cwd, this.home).ok) this.db.prepare("UPDATE tasks SET trusted = 0 WHERE id = ?").run(id); // owner task cleans up
     }
@@ -599,6 +624,7 @@ export class TaskManager extends EventEmitter {
   // ---- watchdog: budget (P46), stuck (P46/P10), resume after limit (P10) -------------------------------
   private tick(now = Date.now()) {
     void this.runDue(now).catch(() => {});
+    this.logs.poll();
     for (const [id, s] of this.sessions) {
       if (!s.alive) continue;
       const t = this.get(id);
@@ -825,8 +851,8 @@ export class TaskManager extends EventEmitter {
   }
 
   // ---- Night Shift: scheduled runs (P23 S1, P07 S4) ------------------------------------------------------
-  /** Run a task later: at a time, when the agent's usage limit resets, and optionally every day. */
-  schedule(input: NewTask, when: { at?: number; afterReset?: boolean; daily?: boolean }): Scheduled {
+  /** Run a task later: at a time, when the agent's usage limit resets, and optionally again and again (automations). */
+  schedule(input: NewTask, when: { at?: number; afterReset?: boolean; daily?: boolean; repeat?: string; title?: string }): Scheduled {
     if (!input.repo || !existsSync(input.repo)) throw new Error(`project folder not found: ${input.repo}`);
     let runAt = when.at ?? 0;
     if (when.afterReset) {
@@ -835,9 +861,11 @@ export class TaskManager extends EventEmitter {
       runAt = num(r.t) > Date.now() ? num(r.t) + 60_000 : Date.now() + 5 * 3600_000; // unknown: the usual 5-hour window
     }
     if (!runAt) throw new Error("give a time, or choose 'after the limit resets'");
-    const title = (input.title || input.prompt.split("\n")[0] || input.agent || "task").slice(0, 80);
+    const title = (when.title || input.title || input.prompt.split("\n")[0] || input.agent || "task").slice(0, 80);
+    const repeat = (REPEATS as readonly string[]).includes(when.repeat ?? "") ? when.repeat! : when.daily ? "daily" : "";
+    if (repeat === "weekdays") while ([0, 6].includes(new Date(runAt).getDay())) runAt += 86_400_000; // start on a weekday
     this.db.prepare('INSERT INTO schedule (input, run_at, repeat, "when", created, title) VALUES (?, ?, ?, ?, ?, ?)')
-      .run(JSON.stringify(input), runAt, when.daily ? "daily" : "", when.afterReset ? "reset" : "at", Date.now(), title);
+      .run(JSON.stringify(input), runAt, repeat, when.afterReset ? "reset" : "at", Date.now(), title);
     const s = this.db.prepare("SELECT * FROM schedule ORDER BY id DESC LIMIT 1").get() as Scheduled;
     this.emit("schedule", { schedule: this.scheduled() });
     return s;
@@ -850,6 +878,48 @@ export class TaskManager extends EventEmitter {
   unschedule(sid: number) {
     this.db.prepare("UPDATE schedule SET status = 'cancelled' WHERE id = ?").run(sid);
     this.emit("schedule", { schedule: this.scheduled() });
+  }
+
+  // ---- Automations: scheduled runs as a list you manage (pause, resume, run now, history) ------------------
+  automations(): Array<Scheduled & { prompt: string; agent: string; repo: string; runs: number }> {
+    const rows = this.db.prepare(`SELECT * FROM schedule WHERE status <> 'cancelled'
+      ORDER BY CASE status WHEN 'waiting' THEN 0 WHEN 'paused' THEN 1 ELSE 2 END, run_at`).all() as Scheduled[];
+    const count = this.db.prepare("SELECT COUNT(*) AS n FROM schedule_runs WHERE schedule_id = ?");
+    return rows.map((r) => {
+      let input: Partial<NewTask> = {};
+      try { input = JSON.parse(r.input); } catch { /* old row */ }
+      return { ...r, prompt: input.prompt ?? "", agent: input.agent ?? "auto", repo: input.repo ?? "", runs: num((count.get(r.id) as { n: number }).n) };
+    });
+  }
+
+  automationRuns(limit = 50) {
+    return this.db.prepare(`SELECT r.id, r.schedule_id, r.task, r.ts, r.error, s.title, t.status, t.agent
+      FROM schedule_runs r JOIN schedule s ON s.id = r.schedule_id LEFT JOIN tasks t ON t.id = r.task ORDER BY r.ts DESC, r.id DESC LIMIT ?`).all(limit);
+  }
+
+  pauseAutomation(sid: number) {
+    this.db.prepare("UPDATE schedule SET status = 'paused' WHERE id = ? AND status = 'waiting'").run(sid);
+    this.emit("schedule", { schedule: this.scheduled() });
+  }
+
+  resumeAutomation(sid: number, now = Date.now()) {
+    const s = this.db.prepare("SELECT * FROM schedule WHERE id = ?").get(sid) as Scheduled | undefined;
+    if (!s || s.status !== "paused") return;
+    // A repeating automation picks up at its next slot; a one-off that came due while paused runs in a minute.
+    const at = s.run_at > now ? s.run_at : s.repeat ? nextRun(s.repeat, s.run_at, now) : now + 60_000;
+    this.db.prepare("UPDATE schedule SET status = 'waiting', run_at = ? WHERE id = ?").run(at, sid);
+    this.emit("schedule", { schedule: this.scheduled() });
+  }
+
+  /** Start an automation's task right now, without moving its schedule. */
+  async runAutomation(sid: number): Promise<Task> {
+    const s = this.db.prepare("SELECT * FROM schedule WHERE id = ?").get(sid) as Scheduled | undefined;
+    if (!s) throw new Error("no such automation");
+    const t = await this.create(JSON.parse(s.input));
+    this.db.prepare("INSERT INTO schedule_runs (schedule_id, task, ts) VALUES (?, ?, ?)").run(sid, t.id, Date.now());
+    this.db.prepare("UPDATE schedule SET last_task = ? WHERE id = ?").run(t.id, sid);
+    this.emit("schedule", { schedule: this.scheduled() });
+    return t;
   }
 
   private runningDue = false;
@@ -870,10 +940,14 @@ export class TaskManager extends EventEmitter {
       if (Number(claimed.changes) !== 1) continue;
       try {
         const t = await this.create(JSON.parse(s.input));
-        if (s.repeat === "daily") this.db.prepare("UPDATE schedule SET status = 'waiting', run_at = ?, last_task = ? WHERE id = ?").run(s.run_at + 24 * 3600_000, t.id, s.id);
+        this.db.prepare("INSERT INTO schedule_runs (schedule_id, task, ts) VALUES (?, ?, ?)").run(s.id, t.id, now);
+        if (s.repeat) this.db.prepare("UPDATE schedule SET status = 'waiting', run_at = ?, last_task = ? WHERE id = ?").run(nextRun(s.repeat, s.run_at, now), t.id, s.id);
         else this.db.prepare("UPDATE schedule SET status = 'done', last_task = ? WHERE id = ?").run(t.id, s.id);
       } catch (e) {
-        this.db.prepare("UPDATE schedule SET status = 'failed' WHERE id = ?").run(s.id);
+        this.db.prepare("INSERT INTO schedule_runs (schedule_id, ts, error) VALUES (?, ?, ?)").run(s.id, now, (e as Error).message.slice(0, 300));
+        // A repeating automation tries again at its next slot; a one-off is marked failed.
+        if (s.repeat) this.db.prepare("UPDATE schedule SET status = 'waiting', run_at = ? WHERE id = ?").run(nextRun(s.repeat, s.run_at, now), s.id);
+        else this.db.prepare("UPDATE schedule SET status = 'failed' WHERE id = ?").run(s.id);
         this.alert({ kind: "pipeline", task: "", agent: "netheron", message: `Scheduled task "${s.title}" couldn't start: ${(e as Error).message}` });
       }
     }
@@ -1010,6 +1084,9 @@ export class TaskManager extends EventEmitter {
     this.emit("meter", { id: t.id, meter: this.meter(t.id) });
   }
 
+  /** Raise an alert from outside the task manager (e.g. a revoked phone's recent input). */
+  notice(a: Omit<Alert, "ts">) { this.alert(a); }
+
   private alert(a: Omit<Alert, "ts">) {
     this.publish(saveAlert(this.db, { ts: Date.now(), ...a }));
   }
@@ -1079,6 +1156,7 @@ export class TaskManager extends EventEmitter {
 
   // ---- end of life ----------------------------------------------------------------------------------------
   private async finish(id: string, code: number) {
+    this.logs.remove(id); // last read, so the final turn is counted
     const t = this.get(id);
     if (!t) return;
     const stopped = t.status === "stopped";
@@ -1108,6 +1186,17 @@ export class TaskManager extends EventEmitter {
 
   resize(id: string, cols: number, rows: number) {
     this.sessions.get(id)?.resize(cols, rows);
+  }
+
+  /** Live terminals (resource manager, status bar, keep-awake). */
+  liveSessions(): Array<{ id: string; pid: number; lastOutputAt: number; status: string; title: string; agent: string; repo: string }> {
+    const out = [];
+    for (const [id, s] of this.sessions) {
+      if (!s.alive) continue;
+      const t = this.get(id);
+      out.push({ id, pid: s.pid, lastOutputAt: s.lastOutputAt, status: t?.status ?? "", title: t?.title ?? id, agent: t?.agent ?? "", repo: t?.repo ?? "" });
+    }
+    return out;
   }
 
   stop(id: string) {
@@ -1148,6 +1237,7 @@ export class TaskManager extends EventEmitter {
     try { await deleteCheckpoints(t.repo, id); } catch { /* not a git repo */ }
     this.db.prepare("DELETE FROM task_queue WHERE task = ?").run(id);
     this.db.prepare("DELETE FROM tasks WHERE id = ?").run(id);
+    this.logs.remove(id);
     this.guards.delete(id);
     this.emit("removed", id);
   }

@@ -1,0 +1,52 @@
+/* Block skin: the Minecraft look. Only token values and a few surface rules change.
+   Words never change, and green stays "done": the main button is diamond cyan. */
+
+:root[data-skin="block"] {
+  --bg: #17171b;
+  --panel: #232328;
+  --panel-2: #2d2d33;
+  --line: #3b3b43;
+  --text: #f0f0f2;
+  --muted: #a7a7b1;
+  --accent: #4fd6e0;
+  --accent-ink: #062427;
+  --ok: #6ccf3f;
+  --warn: #f5c242;
+  --bad: #ec4a40;
+  --idle: #b78cf0;
+  --shadow: 4px 4px 0 rgba(0, 0, 0, .45);
+  --radius: 2px;
+  --radius-sm: 2px;
+  --bevel: inset 0 2px 0 rgba(255, 255, 255, .14), inset 0 -3px 0 rgba(0, 0, 0, .35);
+  --bevel-press: inset 0 3px 0 rgba(0, 0, 0, .35);
+  --font-head: var(--mono);
+  --head-track: .04em;
+}
+@media (prefers-color-scheme: light) {
+  :root[data-skin="block"]:not([data-theme="dark"]) {
+    --bg: #e8e4da; --panel: #f6f3ec; --panel-2: #ece7dc; --line: #c9c1b0; --text: #1e1c18; --muted: #5d574c;
+    --accent: #0b8b95; --accent-ink: #fff; --ok: #3d8a1d; --warn: #9a6a00; --bad: #c0322a; --idle: #7d4bc4;
+    --shadow: 4px 4px 0 rgba(60, 50, 30, .18);
+    --bevel: inset 0 2px 0 rgba(255, 255, 255, .6), inset 0 -3px 0 rgba(0, 0, 0, .12);
+    --bevel-press: inset 0 3px 0 rgba(0, 0, 0, .14);
+  }
+}
+:root[data-skin="block"][data-theme="light"] {
+  --bg: #e8e4da; --panel: #f6f3ec; --panel-2: #ece7dc; --line: #c9c1b0; --text: #1e1c18; --muted: #5d574c;
+  --accent: #0b8b95; --accent-ink: #fff; --ok: #3d8a1d; --warn: #9a6a00; --bad: #c0322a; --idle: #7d4bc4;
+  --shadow: 4px 4px 0 rgba(60, 50, 30, .18);
+  --bevel: inset 0 2px 0 rgba(255, 255, 255, .6), inset 0 -3px 0 rgba(0, 0, 0, .12);
+  --bevel-press: inset 0 3px 0 rgba(0, 0, 0, .14);
+}
+
+/* surfaces: hard edges and blocky buttons. Body text stays in the normal font. */
+[data-skin="block"] :where(button:not(.icon-btn, .link-btn)) { box-shadow: var(--bevel); border-width: 2px; }
+[data-skin="block"] :where(button:not(.icon-btn, .link-btn)):active { box-shadow: var(--bevel-press); transform: translateY(1px); }
+[data-skin="block"] .views button, [data-skin="block"] .subtabs button, [data-skin="block"] .seg button,
+[data-skin="block"] .followups button { box-shadow: none; border-width: 0; }
+[data-skin="block"] .views button.active, [data-skin="block"] .subtabs button.active { box-shadow: inset 0 -3px 0 var(--accent); }
+[data-skin="block"] .home-row, [data-skin="block"] .task, [data-skin="block"] .paper, [data-skin="block"] .quiz-q { border-width: 2px; }
+[data-skin="block"] .home-row { border-left-width: 6px; }
+[data-skin="block"] .logo { box-shadow: var(--bevel); border-radius: 0; }
+[data-skin="block"] .top { border-bottom-width: 2px; }
+[data-skin="block"] .toast { box-shadow: var(--shadow); border-width: 2px; border-left-width: 6px; }

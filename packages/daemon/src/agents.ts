@@ -1,11 +1,17 @@
 import { execFileSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { BROWSER_TOOL_NAMES } from "../../memory/src/mcp.ts";
 import { DATA_DIR, HOST, PORT, UI_PORT } from "./config.ts";
+import type { LogAgent } from "./sessionlogs.ts";
 
-export type Launch = { cmd: string; args: string[]; env: Record<string, string> };
+export type Launch = {
+  cmd: string; args: string[]; env: Record<string, string>;
+  /** Subscription login: usage is read from the CLI's own session logs in this folder, not from the proxy. */
+  logs?: { agent: LogAgent; home: string };
+};
 
 export const AGENTS = ["claude", "codex", "opencode", "pi", "omp", "shell"] as const;
 /** Agents without MCP support: shared memory and rules go into their prompt instead (P28). */
@@ -30,7 +36,24 @@ export type LaunchOpts = {
   cwd?: string;
   /** Shared browser ticked for this task: the MCP server also offers browser_* tools. */
   browser?: boolean;
+  /** Extra environment the agent runs with (an account profile's): used to tell an API key from a subscription. */
+  env?: Record<string, string>;
+  /** Claude / Codex: resume this past session instead of starting a new one. */
+  resume?: string;
 };
+
+export type AuthMode = "key" | "sub";
+/**
+ * How an agent signs in. Subscription logins (Claude Pro/Max, ChatGPT plan) may only be used by the official CLI,
+ * so their traffic goes straight to the provider and never through Netheron's proxy. API keys go through the proxy.
+ * Override with MM_CLAUDE_AUTH / MM_CODEX_AUTH = sub | key.
+ */
+export function authMode(agent: "claude" | "codex", env: Record<string, string | undefined> = process.env): AuthMode {
+  const forced = agent === "claude" ? env.MM_CLAUDE_AUTH : env.MM_CODEX_AUTH;
+  if (forced === "key" || forced === "sub") return forced;
+  if (agent === "claude") return env.ANTHROPIC_API_KEY || env.ANTHROPIC_AUTH_TOKEN ? "key" : "sub";
+  return env.OPENAI_API_KEY ? "key" : "sub";
+}
 
 const base = (tag: string, provider: string) => `http://${HOST}:${PORT}/a/${tag}/${provider}`;
 const fwd = (p: string) => p.replace(/\\/g, "/");
@@ -46,7 +69,7 @@ function mcpEnv(agent: string, o: LaunchOpts): Record<string, string> {
   return env;
 }
 
-// How each CLI is pointed at the proxy and the shared memory. The proxy tag is the agent name
+// How each CLI is pointed at the proxy (API keys only) and the shared memory. The proxy tag is the agent name
 // (plus task id when there is one) so usage can be split per agent and per task.
 export function launchFor(agent: string, userArgs: string[], o: LaunchOpts = {}): Launch {
   const tag = o.taskId ? `${agent}~${o.taskId}` : agent;
@@ -70,20 +93,23 @@ export function launchFor(agent: string, userArgs: string[], o: LaunchOpts = {})
         args.push("--mcp-config", fwd(file), "--settings", fwd(settings));
         if (o.lean) args.push("--strict-mcp-config");
       }
+      if (o.resume) args.push("--resume", o.resume);
       if (o.model) args.push("--model", o.model);
       args.push(...userArgs);
       if (o.prompt) args.push(o.prompt);
-      return { cmd: "claude", args, env: { ANTHROPIC_BASE_URL: base(tag, "anthropic") } };
+      const env = { ...process.env, ...o.env };
+      if (authMode("claude", env) === "key") return { cmd: "claude", args, env: { ANTHROPIC_BASE_URL: base(tag, "anthropic") } };
+      return { cmd: "claude", args, env: {}, logs: { agent: "claude", home: env.CLAUDE_CONFIG_DIR || join(homedir(), ".claude") } };
     }
 
     case "codex": {
-      // ChatGPT plan login -> chatgpt backend; API key -> api.openai.com. Override with MM_CODEX_AUTH=sub|key.
-      const mode = process.env.MM_CODEX_AUTH ?? (process.env.OPENAI_API_KEY ? "key" : "sub");
-      const provider =
-        mode === "key"
-          ? `model_providers.mm={name="mm",base_url="${base(tag, "openai")}/v1",env_key="OPENAI_API_KEY",wire_api="responses"}`
-          : `model_providers.mm={name="mm",base_url="${base(tag, "chatgpt")}",requires_openai_auth=true,wire_api="responses"}`;
-      const args = ["-c", provider, "-c", "model_provider=mm"];
+      // API key -> through the proxy to api.openai.com. ChatGPT plan login -> Codex talks to OpenAI itself and
+      // usage is read from its session logs.
+      const env = { ...process.env, ...o.env };
+      const key = authMode("codex", env) === "key";
+      const args = key
+        ? ["-c", `model_providers.mm={name="mm",base_url="${base(tag, "openai")}/v1",env_key="OPENAI_API_KEY",wire_api="responses"}`, "-c", "model_provider=mm"]
+        : [];
       // Pre-trust the project so every new worktree doesn't stop at Codex's "Trust this folder?" screen (B-010).
       // Codex keys trust by the lower-cased repo root, which it also resolves for linked worktrees.
       if (o.project) args.push("-c", `projects.'${o.project.replace(/\//g, "\\").toLowerCase()}'.trust_level="trusted"`);
@@ -92,10 +118,11 @@ export function launchFor(agent: string, userArgs: string[], o: LaunchOpts = {})
         // Our own memory server is trusted: auto-approve its tools (otherwise `codex exec` refuses them).
         args.push("-c", `mcp_servers.mm={command="${NODE}",args=["${MCP_BIN}"],env={${envToml}},default_tools_approval_mode="approve"}`);
       }
+      if (o.resume) args.push("resume", o.resume);
       if (o.model) args.push("-m", o.model);
       args.push(...userArgs);
       if (o.prompt) args.push(o.prompt);
-      return { cmd: "codex", args, env: {} };
+      return { cmd: "codex", args, env: {}, ...(key ? {} : { logs: { agent: "codex" as const, home: env.CODEX_HOME || join(homedir(), ".codex") } }) };
     }
 
     case "opencode": {

@@ -1,3 +1,4 @@
+import { networkAccess } from "./devices.ts";
 import { spawn } from "node:child_process";
 import { networkInterfaces } from "node:os";
 import { mountResearch } from "../../research/src/routes.ts";
@@ -31,7 +32,8 @@ function lanIp(): string | undefined {
 
 switch (cmd) {
   case "serve": {
-    const lan = rest.includes("--lan");
+    // --lan, or "Network access" turned on in Devices (saved), lets paired phones reach this PC.
+    const lan = rest.includes("--lan") || networkAccess();
     const bind = lan ? "0.0.0.0" : "127.0.0.1";
     const db = openDb();
     const token = loadToken();

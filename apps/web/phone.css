@@ -1,0 +1,35 @@
+/* Phone layout for the Relay skin (narrow screens): a glass bottom tab bar like the phone designs, a slimmer top
+   bar, full-width glass panels, and the status bar folded away (its numbers are on Home). Other skins keep their
+   existing phone layout. */
+.mtabs { display: none; }
+@media (max-width: 900px) {
+  :root[data-skin="relay"] .mtabs {
+    display: flex; justify-content: space-around; align-items: center; position: fixed; left: 10px; right: 10px;
+    bottom: calc(10px + env(safe-area-inset-bottom)); z-index: 40; padding: 6px; border-radius: 26px;
+    background: var(--panel); border: 1px solid var(--line); box-shadow: var(--glass-hi), var(--shadow);
+    -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur);
+  }
+  :root[data-skin="relay"] .mtabs button {
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; min-width: 56px; min-height: 48px;
+    padding: 0 6px; border: 0; border-radius: 18px; background: none; color: var(--muted); font: 500 10.5px/1 var(--font);
+  }
+  :root[data-skin="relay"] .mtabs button svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+  :root[data-skin="relay"] .mtabs button.active { color: var(--text); background: var(--panel-2); }
+  :root[data-skin="relay"] .mtabs button.active svg { color: var(--accent-text); }
+  :root[data-skin="relay"] .mtabs .mt-new { min-width: 52px; min-height: 52px; border-radius: 50%; background: var(--accent); color: var(--accent-ink); box-shadow: 0 8px 24px -8px var(--accent); }
+  :root[data-skin="relay"] .mtabs .mt-new svg { width: 22px; height: 22px; }
+  /* the top bar keeps the logo, project and icons; sections live in the tab bar */
+  :root[data-skin="relay"] .top .views { display: none; }
+  :root[data-skin="relay"] .top { gap: 8px; }
+  :root[data-skin="relay"] .brand .logo-portal { width: 22px; height: 22px; }
+  :root[data-skin="relay"] .statusbar { display: none; }
+  :root[data-skin="relay"] .view.active { padding-bottom: calc(84px + env(safe-area-inset-bottom)); }
+  :root[data-skin="relay"] .doc-main { border-radius: 0; border-width: 0; }
+  :root[data-skin="relay"] .nt-head { font-size: 28px; line-height: 34px; }
+  :root[data-skin="relay"] .home h2 { font-size: 34px; line-height: 38px; }
+  :root[data-skin="relay"] #new-task.composer #nt-start { width: 100%; }
+  :root[data-skin="relay"] .kb { grid-template-columns: 1fr; }
+  :root[data-skin="relay"] .kb-cards { max-height: none; }
+  :root[data-skin="relay"] .dv-qr { border-right: 0; border-bottom: 1px solid var(--line); }
+  :root[data-skin="relay"] .nx-row { flex-wrap: wrap; }
+}

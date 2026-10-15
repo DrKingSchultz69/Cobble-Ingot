@@ -8,27 +8,46 @@
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="icon" href="/icon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/vendor/xterm.css">
+  <link rel="stylesheet" href="/tokens.css">
   <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/skin-block.css">
+  <link rel="stylesheet" href="/skin-relay.css">
+  <link rel="stylesheet" href="/features.css">
+  <link rel="stylesheet" href="/phone.css">
+  <script>
+    // Apply the saved look before the first paint, so the page never flashes the wrong skin.
+    try { const p = JSON.parse(localStorage.getItem("mm.prefs") || "{}"), h = document.documentElement;
+      h.dataset.skin = p.skin || "relay"; if (p.theme) h.dataset.theme = p.theme; if (p.motion === "off") h.dataset.motion = "off"; if (p.embers === "off") h.dataset.embers = "off"; } catch {}
+  </script>
 </head>
 <body>
+  <canvas id="net-bg" aria-hidden="true"></canvas>
+  <div class="nx-glow" aria-hidden="true"></div>
+  <div class="nx-embers" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
   <header class="top">
     <button class="icon-btn only-mobile" id="menu-btn" aria-label="Menu">☰</button>
-    <div class="brand"><span class="logo">N</span><span class="brand-name">Netheron</span></div>
+    <div class="brand"><svg class="logo-portal" width="26" height="26" viewBox="0 0 14 14" shape-rendering="crispEdges" role="img" aria-label="Netheron"><path d="M0 0h14v14H0z" fill="#120c1c"/><path d="M1 1h2v1H1zM11 1h1v2h-1zM12 6h1v1h-1zM1 7h1v2H1zM5 12h2v1H5zM10 11h2v1h-2zM6 1h1v1H6z" fill="#2a1b44"/><path d="M0 0h1v1H0zM13 4h1v1h-1zM2 12h1v1H2zM13 13h1v1h-1zM8 0h2v1H8z" fill="#07040c"/><g class="n"><path class="fill" d="M3 3h2v8H3zM9 3h2v8H9zM5 3h1v3H5zM6 5h1v3H6zM7 6h1v3H7zM8 8h1v3H8z"/><path class="sw" d="M3 5h1v1H3z"/><path class="sw" d="M10 8h1v1h-1z"/><path class="sw" d="M6 6h1v1H6z"/><path class="sw" d="M9 4h1v1H9z"/></g></svg><span class="brand-name">Netheron<span class="brand-tag">agents below · you above</span></span></div>
+    <button class="primary side-new" id="side-new" title="New task (N)"><svg class="nav-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>New task<kbd>N</kbd></button>
     <nav class="views" id="views">
-      <button data-view="home" class="active">Home<span class="count" id="home-count" hidden></span></button>
-      <button data-view="workspace">Workspace</button>
-      <button data-view="research">Research</button>
-      <button data-view="learn">Learn</button>
-      <button data-view="memory">Memory</button>
-      <button data-view="usage">Usage</button>
+      <button data-view="home" class="active"><svg class="nav-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z"/></svg>Home<span class="count" id="home-count" hidden></span></button>
+      <button data-view="board"><svg class="nav-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h4v16H4zM10 4h4v10h-4zM16 4h4v13h-4z"/></svg>Board</button>
+      <button data-view="issues"><svg class="nav-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM12 8v5M12 16v.5"/></svg>Issues</button>
+      <button data-view="automations"><svg class="nav-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 8v4l3 2M4 12a8 8 0 1 0 2.3-5.7M4 4v4h4"/></svg>Automations</button>
+      <button data-view="sessions"><svg class="nav-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h10M4 18h7M17 15l3 3-3 3"/></svg>Sessions</button>
+      <button data-view="workspace"><svg class="nav-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 17l6-6-6-6M12 19h8"/></svg>Workspace</button>
+      <button data-view="research"><svg class="nav-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3h6M10 3v6l-5 9a2 2 0 0 0 2 3h10a2 2 0 0 0 2-3l-5-9V3"/></svg>Research</button>
+      <button data-view="learn"><svg class="nav-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5a2 2 0 0 1 2-2h13v16H6a2 2 0 0 0-2 2zM4 21V5M8 7h7"/></svg>Learn</button>
+      <button data-view="memory"><svg class="nav-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a4 4 0 0 0-4 4v1a4 4 0 0 0-3 6 4 4 0 0 0 4 6h1V3zM12 3a4 4 0 0 1 4 4v1a4 4 0 0 1 3 6 4 4 0 0 1-4 6h-1"/></svg>Memory</button>
+      <button data-view="usage"><svg class="nav-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>Usage</button>
+      <button data-view="devices"><svg class="nav-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 2.5h8a1.5 1.5 0 0 1 1.5 1.5v16a1.5 1.5 0 0 1-1.5 1.5H8A1.5 1.5 0 0 1 6.5 20V4A1.5 1.5 0 0 1 8 2.5zM11 18.5h2"/></svg>Devices</button>
     </nav>
     <div class="top-right">
       <a id="project-remote" class="remote-badge" target="_blank" rel="noopener" hidden></a>
       <select id="project" title="Project folder"></select>
-      <button id="project-add" title="Add project folder">📁 Add</button>
-      <button id="acct-btn" class="icon-btn" title="Accounts: several logins per agent">👤</button>
+      <button id="project-add" title="Add project folder" class="ghost">＋ Folder</button>
+      <button id="acct-btn" class="icon-btn" title="Accounts: several logins per agent" aria-label="Accounts"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zm-7 8a7 7 0 0 1 14 0"/></svg></button>
       <div class="bell-wrap">
-        <button id="bell" class="icon-btn bell" title="Notifications" aria-haspopup="true">🔔<span class="bell-dot"></span></button>
+        <button id="bell" class="icon-btn bell" title="Notifications" aria-haspopup="true" aria-label="Notifications"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 16V11a6 6 0 1 1 12 0v5l1.5 2h-15zM10 20a2 2 0 0 0 4 0"/></svg><span class="bell-dot"></span></button>
         <div id="bell-menu" class="bell-menu" hidden>
           <div class="card-title">Notifications</div>
           <div id="bell-status" class="small"></div>
@@ -40,6 +59,21 @@
           <p class="muted small">You get one when a task finishes, fails, or needs your answer. Windows pop-ups only appear while Netheron's tab is hidden; Netheron's own pop-ups (bottom right) always do.</p>
         </div>
       </div>
+      <div class="bell-wrap prefs-wrap">
+        <button id="prefs-btn" class="icon-btn" title="Look: skin, light or dark, motion" aria-haspopup="true" aria-label="Look"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM19.4 13a7.5 7.5 0 0 0 0-2l2-1.6-2-3.4-2.4 1a7.5 7.5 0 0 0-1.7-1L15 3.5h-4l-.4 2.5a7.5 7.5 0 0 0-1.7 1l-2.4-1-2 3.4 2 1.6a7.5 7.5 0 0 0 0 2l-2 1.6 2 3.4 2.4-1a7.5 7.5 0 0 0 1.7 1l.4 2.5h4l.4-2.5a7.5 7.5 0 0 0 1.7-1l2.4 1 2-3.4z"/></svg></button>
+        <div id="prefs-menu" class="bell-menu prefs-menu" hidden>
+          <div class="card-title">Look</div>
+          <div class="pref"><span class="small muted">Skin</span>
+            <div class="seg" data-pref="skin"><button data-v="relay">Relay</button><button data-v="calm">Calm</button><button data-v="block">Block</button></div></div>
+          <div class="pref"><span class="small muted">Colours</span>
+            <div class="seg" data-pref="theme"><button data-v="">Auto</button><button data-v="light">Light</button><button data-v="dark">Dark</button></div></div>
+          <div class="pref"><span class="small muted">Motion</span>
+            <div class="seg" data-pref="motion"><button data-v="">On</button><button data-v="off">Off (calm)</button></div></div>
+          <div class="pref"><span class="small muted">Embers</span>
+            <div class="seg" data-pref="embers"><button data-v="">On</button><button data-v="off">Off</button></div></div>
+          <p class="muted small">Relay is glass over a living network, with Nether embers. Block is a blocky, pixel look. Same buttons and words, different paint. Motion off stops every animation.</p>
+        </div>
+      </div>
       <span id="conn" class="dot" title="connection"></span>
     </div>
   </header>
@@ -48,14 +82,86 @@
   <!-- HOME: only what needs you, plus one way to start -->
   <section class="view active" id="view-home">
     <div class="home">
-      <h2 id="home-title">Needs you</h2>
+      <div class="home-head">
+        <div class="grow">
+          <h2 id="home-title">Needs you</h2>
+          <p id="home-sum" class="home-sum"></p>
+        </div>
+        <button class="home-new" id="home-new">＋ New task</button>
+      </div>
       <div id="home-list" class="home-list"></div>
-      <p id="home-sum" class="muted small home-sum"></p>
-      <button class="primary home-new" id="home-new">＋ New task</button>
+      <div id="home-running" class="home-running" hidden></div>
+      <p id="home-hint" class="home-hint" hidden>Press <kbd>1</kbd>–<kbd>3</kbd> to open a row.</p>
     </div>
   </section>
 
   <!-- WORKSPACE -->
+  <!-- BOARD: every task by where it stands -->
+  <section class="view" id="view-board">
+    <main class="doc-main wide nx-page">
+      <div class="nx-head"><h2 class="grow">Board</h2><span class="muted small" id="kb-sum"></span><button class="primary" data-go-new>+ New task</button></div>
+      <div class="kb" id="kb"></div>
+    </main>
+  </section>
+
+  <!-- ISSUES: GitHub (gh CLI) and Linear; any row can become a task -->
+  <section class="view" id="view-issues">
+    <main class="doc-main wide nx-page">
+      <div class="nx-head">
+        <div class="seg" id="is-source"><button data-v="github" class="active">GitHub</button><button data-v="linear">Linear</button><button data-v="jira">Jira</button></div>
+        <div class="seg" id="is-kind"><button data-v="issues" class="active">Issues</button><button data-v="prs">Pull requests</button></div>
+        <span class="grow muted small" id="is-conn"></span>
+        <input id="is-q" placeholder="Search" style="max-width:240px">
+        <button id="is-refresh" class="ghost" title="Refresh">↻</button>
+      </div>
+      <form id="is-linear-form" class="row" hidden>
+        <input id="is-linear-key" class="grow" placeholder="Linear personal API key (lin_api_…), from Linear › Settings › API" autocomplete="off">
+        <button class="primary">Connect Linear</button>
+      </form>
+      <div id="is-list"></div>
+    </main>
+  </section>
+
+  <!-- AUTOMATIONS: tasks that run on a schedule until paused -->
+  <section class="view" id="view-automations">
+    <main class="doc-main wide nx-page">
+      <div class="nx-head"><h2 class="grow">Automations</h2>
+        <div class="seg" id="au-tabs"><button data-v="list" class="active">Automations</button><button data-v="runs">Runs</button></div>
+        <button class="primary" id="au-new">+ New automation</button></div>
+      <div id="au-list"></div>
+      <div id="au-tpl-wrap"><h3 class="nx-rail">Start from a template</h3><div class="au-tpls" id="au-tpls"></div></div>
+    </main>
+  </section>
+
+  <!-- SESSIONS: past Claude / Codex sessions on this PC, resumable -->
+  <section class="view" id="view-sessions">
+    <main class="doc-main wide nx-page">
+      <div class="nx-head"><h2 class="grow">Session history</h2>
+        <div class="seg" id="ss-scope"><button data-v="project" class="active">This project</button><button data-v="all">All</button></div>
+        <input id="ss-q" placeholder="Search sessions" style="max-width:260px"><button id="ss-refresh" class="ghost" title="Rescan">↻</button></div>
+      <p class="muted small">Claude Code and Codex sessions found in their own log folders on this PC. Resume one to carry on where it stopped.</p>
+      <div id="ss-list"></div>
+    </main>
+  </section>
+
+  <!-- DEVICES: phones paired with their own key -->
+  <section class="view" id="view-devices">
+    <main class="doc-main wide nx-page">
+      <div class="nx-head"><h2 class="grow">Your devices</h2><button class="primary" id="dv-pair">Pair a phone</button></div>
+      <p class="muted">Each phone has its own key. Revoking one cuts it off at once and leaves the others working. Phones reach this PC directly through Tailscale or your Wi-Fi; nothing sits in the middle.</p>
+      <div id="dv-list"></div>
+      <h3 class="nx-rail">If you lose a phone</h3>
+      <p class="muted small">Revoke it here or from any other paired phone. Agents keep working; anything it typed into a task in its last minute shows in Needs you. Also remove it from your Tailscale admin page.</p>
+    </main>
+  </section>
+  <section class="view" id="view-new">
+    <div class="nt-stage">
+      <span class="nt-eyebrow">New relay</span>
+      <h1 class="nt-head">What should we build in <button type="button" class="nt-proj" id="nt-proj-name" title="Change project">…</button>?</h1>
+      <p class="muted nt-sub">Describe it. Netheron picks the agent, gives it its own worktree and the shared memory.</p>
+      <div id="nt-slot"></div>
+    </div>
+  </section>
   <section class="view" id="view-workspace">
     <aside class="side" id="side">
       <form id="new-task" class="card wiz" data-step="1">
@@ -239,7 +345,7 @@
   <!-- RESEARCH -->
   <section class="view" id="view-research">
     <aside class="side">
-      <button class="primary" id="rs-new">New thread</button>
+      <button id="rs-new">＋ New thread</button>
       <div class="card-title">Threads</div>
       <div id="rs-threads" class="list"></div>
       <div class="card-title">Spaces</div>
@@ -440,10 +546,51 @@
   </dialog>
 
   <div id="toasts"></div>
+  <dialog id="au-dlg">
+    <form method="dialog" id="au-form" class="card">
+      <div class="row"><input id="au-title" class="grow au-title" placeholder="Name this automation" required><button value="cancel" formnovalidate class="ghost" aria-label="Close">✕</button></div>
+      <label class="wiz-field">Prompt<textarea id="au-prompt" rows="6" placeholder="Run the dependency audit and summarise risky changes." required></textarea></label>
+      <div class="au-grid">
+        <label class="wiz-field">Agent<select id="au-agent"><option value="auto">Auto (router decides)</option><option value="claude">Claude Code</option><option value="codex">Codex</option><option value="opencode">OpenCode</option><option value="pi">Pi</option></select></label>
+        <label class="wiz-field">Project<select id="au-project"></select></label>
+        <label class="wiz-field">Repeat<select id="au-repeat"><option value="weekdays">Weekdays</option><option value="daily">Every day</option><option value="hourly">Every hour</option><option value="weekly">Every week</option><option value="">Once</option></select></label>
+        <label class="wiz-field">First run<input id="au-at" type="datetime-local" required></label>
+        <label class="wiz-field">Budget per run ($)<input id="au-budget" type="number" min="0" step="0.5" placeholder="none"></label>
+        <label class="wiz-field au-check"><span><input type="checkbox" id="au-isolate" checked> own worktree each run</span></label>
+      </div>
+      <div class="row"><span class="muted small grow">Once saved, it runs on its own until you pause it.</span><button value="cancel" formnovalidate>Cancel</button><button class="primary" id="au-create" value="create">Create</button></div>
+    </form>
+  </dialog>
+  <dialog id="dv-dlg">
+    <div class="dv-pairbox">
+      <div class="dv-qr" id="dv-qr"></div>
+      <div class="dv-steps">
+        <div class="row"><h3 class="grow" style="margin:0">Pair a phone</h3><button class="ghost" id="dv-close" aria-label="Close">✕</button></div>
+        <ol>
+          <li>On the phone, install <b>Tailscale</b> and sign in to the same account as this PC (or join the same Wi-Fi).</li>
+          <li>Scan this code with the phone's camera.</li>
+          <li>The phone gets its own key, and the code stops working.</li>
+        </ol>
+        <p class="small" id="dv-hint"></p>
+        <p class="muted small mono" id="dv-url"></p>
+        <div class="row"><span class="muted small grow" id="dv-expire"></span><button id="dv-new">New code</button></div>
+      </div>
+    </div>
+  </dialog>
+  <footer class="statusbar" id="statusbar" aria-label="Status"></footer>
+  <nav class="mtabs" id="mtabs" aria-label="Sections">
+    <button data-view="home"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z"/></svg>Home</button>
+    <button data-view="board"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h4v16H4zM10 4h4v10h-4zM16 4h4v13h-4z"/></svg>Board</button>
+    <button class="mt-new" data-new aria-label="New task"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button>
+    <button data-view="workspace"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 17l6-6-6-6M12 19h8"/></svg>Tasks</button>
+    <button data-view="devices"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 2.5h8a1.5 1.5 0 0 1 1.5 1.5v16a1.5 1.5 0 0 1-1.5 1.5H8A1.5 1.5 0 0 1 6.5 20V4A1.5 1.5 0 0 1 8 2.5zM11 18.5h2"/></svg>Devices</button>
+  </nav>
+  <script src="/vendor/qrcode.js"></script>
   <script src="/vendor/xterm.js"></script>
   <script src="/vendor/addon-fit.js"></script>
   <script src="/vendor/marked.js"></script>
   <script src="/vendor/purify.js"></script>
+  <script src="/lattice.js"></script>
   <script src="/app.js" type="module"></script>
 </body>
 </html>

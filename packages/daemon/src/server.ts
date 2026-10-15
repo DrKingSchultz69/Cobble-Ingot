@@ -11,7 +11,8 @@ import { buildContext, projectFiles, record, RECORD_KINDS, type RecordKind } fro
 import { ensureGraphSchema, neighbors, recent, search, stats } from "../../memory/src/graph.ts";
 import { indexProject, projectKey, renderTree } from "../../memory/src/indexer.ts";
 import { CATALOG, detectAvailability } from "../../router/src/router.ts";
-import { cookies, isAuthorized, sameOrigin, tokenCookie } from "./auth.ts";
+import { cookies, isAuthorized, requestToken, sameOrigin, tokenCookie } from "./auth.ts";
+import { createPairing, deviceForToken, ensureDeviceSchema, listDevices, networkAccess, reachableAddresses, redeemPairing, renameDevice, revokeDevice, setNetworkAccess } from "./devices.ts";
 import { BrowserBlocked, SharedBrowser, type BrowserAction, type UserInput } from "./browser.ts";
 import { PORT } from "./config.ts";
 import { usageSummary } from "./db.ts";
@@ -23,6 +24,11 @@ import { runDiagnostics } from "./diagnostics.ts";
 import { addWorker, ensureWorkerSchema, listWorkers, removeWorker, setWorkerFolder, workerCreate, workerOpenUrl, workerTasks } from "./workers.ts";
 import { ensurePushSchema, lastNotification, pushAll, subscribe, unsubscribe, vapidKeys } from "./push.ts";
 import { createProfile, listProfiles, projectProfiles, setProjectProfile } from "./profiles.ts";
+import { listSessions } from "./sessions.ts";
+import { KeepAwake, type AwakeMode } from "./awake.ts";
+import { ResourceMonitor } from "./resources.ts";
+import { agentLimits } from "./sessionlogs.ts";
+import { githubList, githubStatus, linearKey, linearList, setLinearKey } from "./issues.ts";
 import { presetPipeline, TaskManager, type NewTask } from "./tasks.ts";
 import { cloneRepo, defaultCloneDir, remoteInfo } from "./worktree.ts";
 
@@ -36,10 +42,11 @@ const VENDOR: Record<string, string> = {
   "addon-fit.js": join(NM, "@xterm/addon-fit/lib/addon-fit.js"),
   "marked.js": join(NM, "marked/lib/marked.umd.js"),
   "purify.js": join(NM, "dompurify/dist/purify.min.js"),
+  "qrcode.js": join(NM, "qrcode-generator/qrcode.js"),
 };
 const MIME: Record<string, string> = {
   ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8",
-  ".json": "application/json", ".svg": "image/svg+xml", ".ttf": "font/ttf", ".png": "image/png", ".webmanifest": "application/manifest+json",
+  ".json": "application/json", ".svg": "image/svg+xml", ".ttf": "font/ttf", ".woff2": "font/woff2", ".png": "image/png", ".webmanifest": "application/manifest+json",
 };
 
 export type ServerOpts = {
@@ -51,6 +58,10 @@ export type ServerOpts = {
   browser?: SharedBrowser;
   /** Extra API routes (research, learn…), mounted behind auth. */
   extend?: (r: Router, ctx: { db: DatabaseSync; broadcast: (m: unknown) => void }) => void;
+  /** Keep-awake controller (tests pass one with a fake process starter). */
+  awake?: KeepAwake;
+  /** Resource monitor (tests pass one with a fake process table). */
+  resources?: ResourceMonitor;
 };
 
 export function createWorkspaceServer(o: ServerOpts): { server: Server; tasks: TaskManager; broadcast: (m: unknown) => void } {
@@ -75,6 +86,29 @@ export function createWorkspaceServer(o: ServerOpts): { server: Server; tasks: T
   // Wave 1 live updates: per-task meter, edit guard, checkpoints, queue, alerts.
   for (const ev of ["meter", "guard", "checkpoint", "queue", "verify", "schedule", "race", "quality"]) tasks.on(ev, (x) => broadcast({ t: ev, ...x }));
   tasks.on("alert", (a) => broadcast({ t: "alert", alert: a }));
+
+  // Who is asking: the PC owner (the main key) or a paired phone (its own key, revocable).
+  ensureDeviceSchema(db);
+  const who = (req: IncomingMessage): { kind: "owner" } | { kind: "device"; id: string } | null => {
+    if (isAuthorized(req, token)) return { kind: "owner" };
+    const d = deviceForToken(db, requestToken(req));
+    return d ? { kind: "device", id: d.id } : null;
+  };
+  const deviceSockets = new Map<string, Set<WebSocket>>();
+  /** What each phone typed into which task, and when: flagged in Needs you if the phone is revoked soon after. */
+  const deviceInput = new Map<string, Map<string, number>>();
+
+  // Keep awake (status bar): in "agent" mode the PC stays awake while any agent is working.
+  const awake = o.awake ?? new KeepAwake();
+  const resources = o.resources ?? new ResourceMonitor();
+  const syncAwake = () => {
+    const before = awake.state();
+    awake.setWorking(tasks.liveSessions().some((s) => s.status === "running" || s.status === "starting"));
+    const after = awake.state();
+    if (before.active !== after.active || before.working !== after.working) broadcast({ t: "awake", awake: after });
+  };
+  tasks.on("task", syncAwake);
+  tasks.on("removed", syncAwake);
 
   const api = new Router();
 
@@ -115,7 +149,7 @@ export function createWorkspaceServer(o: ServerOpts): { server: Server; tasks: T
   api.post("/api/push/unsubscribe", ({ body }) => { unsubscribe(db, String(body.endpoint ?? "")); return { ok: true }; });
   api.post("/api/push/test", async () => pushAll(db, { title: "Netheron: test push", body: "Push works. You'll get these even with Netheron closed." }));
   api.post("/api/route", ({ body }) => tasks.route(String(body.prompt ?? "")));
-  api.post("/api/tasks", async ({ body }) => {
+  const taskInput = (body: Record<string, any>): NewTask => {
     const input: NewTask = {
       prompt: String(body.prompt ?? ""),
       title: body.title,
@@ -134,6 +168,10 @@ export function createWorkspaceServer(o: ServerOpts): { server: Server; tasks: T
       browser: !!body.browser,
     };
     if (body.pipeline) input.pipeline = { steps: presetPipeline(String(body.pipeline), detectAvailability()), index: 0 };
+    return input;
+  };
+  api.post("/api/tasks", async ({ body }) => {
+    const input = taskInput(body);
     // Race & Judge: same task on several agents.
     if (body.race) return { race: await tasks.race(input) };
     // Night Shift: schedule instead of starting now.
@@ -166,6 +204,143 @@ export function createWorkspaceServer(o: ServerOpts): { server: Server; tasks: T
   api.post("/api/races/:rid/judge", ({ params }) => tasks.judge(params.rid));
   api.post("/api/races/:rid/keep", ({ params, body }) => tasks.keepWinner(params.rid, body.task ? String(body.task) : undefined));
   api.delete("/api/schedule/:sid", ({ params }) => { tasks.unschedule(Number(params.sid)); return { schedule: tasks.scheduled() }; });
+  // Devices: pair a phone with a one-time QR code, list, rename, revoke (revoking closes its live connections).
+  api.get("/api/devices", ({ req }) => {
+    const me = who(req);
+    const addr = server.address();
+    const listening = typeof addr === "object" && addr ? addr.address : "127.0.0.1";
+    return { devices: listDevices(db), me: me?.kind === "device" ? me.id : "owner", addresses: reachableAddresses(),
+             network: { on: networkAccess(), listening: listening === "0.0.0.0" || listening === "::" } };
+  });
+  api.post("/api/devices/pair", ({ req }) => {
+    if (who(req)?.kind !== "owner") throw httpError(403, "Pair new phones from the PC.");
+    const { code, expiresAt } = createPairing(db);
+    const addr = server.address();
+    const port = typeof addr === "object" && addr ? addr.port : 4142;
+    const bound = typeof addr === "object" && addr ? addr.address : "127.0.0.1";
+    const local = bound === "127.0.0.1" || bound === "::1";
+    const ips = reachableAddresses();
+    const host = ips[0]?.ip ?? "localhost";
+    return {
+      code, expiresAt, url: `http://${host}:${port}/pair?code=${code}`, via: ips[0]?.kind ?? "none", addresses: ips,
+      // Bound to localhost only: phones can't reach it until Netheron is started with network access.
+      reachable: !local && ips.length > 0,
+      hint: local ? "Netheron only listens on this PC. Start it with `mm serve --lan` (or turn on network access) so a phone on Tailscale or Wi-Fi can reach it."
+        : !ips.length ? "No Tailscale or Wi-Fi address found. Install Tailscale on this PC and the phone, signed in to the same account." : "",
+    };
+  });
+  api.post("/api/network", ({ req, body }) => {
+    if (who(req)?.kind !== "owner") throw httpError(403, "Change network access from the PC.");
+    setNetworkAccess(!!body.on);
+    const addr = server.address();
+    const listening = typeof addr === "object" && addr ? addr.address : "127.0.0.1";
+    return { on: networkAccess(), restartNeeded: (listening === "0.0.0.0") !== !!body.on };
+  });
+  api.post("/api/devices/:id/revoke", ({ params }) => {
+    const dev = listDevices(db).find((d) => d.id === params.id);
+    revokeDevice(db, params.id);
+    for (const ws of deviceSockets.get(params.id) ?? []) try { ws.close(4401, "revoked"); } catch { /* closed */ }
+    deviceSockets.delete(params.id);
+    // Agents keep working; anything this phone sent in the last minute is flagged for you to check.
+    for (const [task, ts] of deviceInput.get(params.id) ?? []) {
+      const t = tasks.get(task);
+      if (t && Date.now() - ts < 60_000) tasks.notice({ kind: "guard", task, agent: t.agent, message: `"${dev?.name ?? "A phone"}" was revoked. It typed into this task in the last minute: check what it sent.` });
+    }
+    deviceInput.delete(params.id);
+    broadcast({ t: "devices" });
+    return { devices: listDevices(db) };
+  });
+  api.post("/api/devices/:id/rename", ({ params, body }) => { renameDevice(db, params.id, String(body.name ?? "")); return { devices: listDevices(db) }; });
+  // Issues hub: GitHub (gh CLI login) and Linear (API key).
+  api.get("/api/integrations", async ({ query }) => ({
+    github: await githubStatus(undefined, query.get("project") || process.cwd()),
+    linear: { connected: !!linearKey() },
+    jira: { connected: false },
+  }));
+  api.post("/api/integrations/linear", ({ body }) => {
+    const key = String(body.key ?? "").trim();
+    if (!/^lin_api_\w{10,}$/.test(key)) throw httpError(400, "That doesn't look like a Linear personal API key (lin_api_…).");
+    setLinearKey(key);
+    return { linear: { connected: true } };
+  });
+  api.get("/api/issues", async ({ query }) => {
+    const source = query.get("source") ?? "github";
+    try {
+      if (source === "linear") return { issues: await linearList() };
+      if (source === "github") return { issues: await githubList(query.get("project") ?? "", query.get("kind") === "prs" ? "prs" : "issues") };
+      return { issues: [], note: "Jira isn't connected yet." };
+    } catch (e) { throw httpError(400, (e as Error).message); }
+  });
+  // Status bar: limits, keep awake, counts and today's spend in one call.
+  api.get("/api/status", () => {
+    const now = Date.now();
+    const midnight = new Date(); midnight.setHours(0, 0, 0, 0);
+    const spend = db.prepare("SELECT auth, ROUND(SUM(cost_usd), 4) AS cost FROM calls WHERE ts >= ? GROUP BY auth").all(midnight.getTime()) as Array<{ auth: string; cost: number }>;
+    const live = tasks.liveSessions();
+    const list = tasks.list();
+    const limits = agentLimits(db).map((l) => ({ agent: l.agent, ts: l.ts, ...l.info }));
+    // Agents behind the proxy (API keys): limited while a 429's reset time is in the future.
+    for (const r of db.prepare("SELECT agent, MAX(reset_at) AS reset FROM calls WHERE status = 429 AND reset_at > ? GROUP BY agent").all(now) as Array<{ agent: string; reset: number }>) {
+      const l = limits.find((x) => x.agent === r.agent);
+      if (l) { if (!l.resetAt || r.reset > l.resetAt) Object.assign(l, { limited: true, resetAt: r.reset }); }
+      else limits.push({ agent: r.agent, ts: now, limited: true, resetAt: r.reset });
+    }
+    for (const l of limits) if (l.limited && l.resetAt && l.resetAt < now) l.limited = false; // the window reset since
+    return {
+      awake: awake.state(),
+      running: list.filter((t) => t.status === "running" || t.status === "starting").length,
+      waiting: list.filter((t) => t.status === "idle").length,
+      terminals: live.length,
+      spend: { api: spend.find((x) => x.auth === "api_key")?.cost ?? 0, subscriptionValue: spend.find((x) => x.auth === "subscription")?.cost ?? 0 },
+      limits,
+    };
+  });
+  api.post("/api/awake", ({ body }) => {
+    try { awake.setMode(String(body.mode ?? "") as AwakeMode); } catch (e) { throw httpError(400, (e as Error).message); }
+    syncAwake();
+    broadcast({ t: "awake", awake: awake.state() });
+    return awake.state();
+  });
+  // Resource manager: memory / CPU per task terminal, and closing terminals that have been idle a long time.
+  api.get("/api/resources", async () => resources.snapshot(tasks.liveSessions()));
+  api.post("/api/resources/cleanup", ({ body }) => {
+    const hours = Math.max(1, Number(body.hours) || 48);
+    const old = tasks.liveSessions().filter((s) => s.status !== "running" && s.status !== "starting" && Date.now() - s.lastOutputAt > hours * 3600_000);
+    for (const s of old) tasks.stop(s.id);
+    return { stopped: old.map((s) => s.id) };
+  });
+  // Session history: past Claude / Codex sessions on this PC, resumable as tasks.
+  api.get("/api/sessions", ({ query }) => {
+    const profileDirs = listProfiles(db).map((p) => ({ agent: p.agent, dir: p.env.CLAUDE_CONFIG_DIR || p.env.CODEX_HOME || "" })).filter((p) => p.dir);
+    let list = listSessions({ claudeHomes: profileDirs.filter((p) => p.agent === "claude").map((p) => p.dir),
+                              codexHomes: profileDirs.filter((p) => p.agent === "codex").map((p) => p.dir), limit: 300 });
+    const under = query.get("under") ?? "";
+    if (under) { const u = under.replace(/[\\/]+$/, "").toLowerCase(); list = list.filter((s) => s.cwd.toLowerCase().startsWith(u)); }
+    const q = (query.get("q") ?? "").toLowerCase();
+    if (q) list = list.filter((s) => s.title.toLowerCase().includes(q) || s.cwd.toLowerCase().includes(q));
+    return { sessions: list.slice(0, 200) };
+  });
+  api.post("/api/sessions/resume", async ({ body }) => {
+    const agent = String(body.agent ?? ""), id = String(body.id ?? ""), cwd = String(body.cwd ?? "");
+    if (!/^[\w-]{6,80}$/.test(id)) throw httpError(400, "bad session id");
+    try { return await tasks.create({ prompt: "", agent, repo: cwd, resume: id, title: `↻ ${String(body.title ?? "Resumed session").slice(0, 70)}` }); }
+    catch (e) { throw httpError(400, (e as Error).message); }
+  });
+  // Automations: the scheduled-run list with pause / resume / run now / history.
+  api.get("/api/automations", () => ({ automations: tasks.automations(), runs: tasks.automationRuns() }));
+  api.post("/api/automations", ({ body }) => {
+    const at = Date.parse(String(body.at ?? ""));
+    if (Number.isNaN(at)) throw httpError(400, "give the first run time");
+    try {
+      return { automation: tasks.schedule(taskInput(body), { at, repeat: String(body.repeat ?? ""), title: body.title ? String(body.title) : undefined }) };
+    } catch (e) { throw httpError(400, (e as Error).message); }
+  });
+  api.post("/api/automations/:sid/pause", ({ params }) => { tasks.pauseAutomation(Number(params.sid)); return { ok: true }; });
+  api.post("/api/automations/:sid/resume", ({ params }) => { tasks.resumeAutomation(Number(params.sid)); return { ok: true }; });
+  api.post("/api/automations/:sid/run", async ({ params }) => {
+    try { return await tasks.runAutomation(Number(params.sid)); } catch (e) { throw httpError(400, (e as Error).message); }
+  });
+  api.delete("/api/automations/:sid", ({ params }) => { tasks.unschedule(Number(params.sid)); return { ok: true }; });
   api.get("/api/brief", ({ query }) => ({ since: Date.now() - Number(query.get("hours") ?? 16) * 3600_000, tasks: tasks.brief(Date.now() - Number(query.get("hours") ?? 16) * 3600_000) }));
   // Account profiles (P13)
   api.get("/api/profiles", ({ query }) => ({ profiles: listProfiles(db), projectDefaults: query.get("project") && existsSync(query.get("project")!) ? projectProfiles(db, query.get("project")!) : {} }));
@@ -382,7 +557,19 @@ export function createWorkspaceServer(o: ServerOpts): { server: Server; tasks: T
       return;
     }
     if (url.pathname === "/manifest.webmanifest" || url.pathname === "/icon.svg") return serveFile(res, join(WEB, url.pathname.slice(1)));
-    if (!isAuthorized(req, token)) {
+    if (url.pathname === "/pair") {
+      try {
+        const { token: key } = redeemPairing(db, url.searchParams.get("code") ?? "", { agent: String(req.headers["user-agent"] ?? "") });
+        broadcast({ t: "devices" });
+        res.writeHead(302, { "set-cookie": tokenCookie(key), location: "/?paired=1" });
+        return res.end();
+      } catch (e) {
+        res.writeHead(400, { "content-type": "text/html; charset=utf-8" });
+        return res.end(`<!doctype html><meta name=viewport content="width=device-width"><body style="font:16px system-ui;padding:24px;background:#08080a;color:#ededef">
+          <h2>Netheron</h2><p>${String((e as Error).message).replace(/[<>&]/g, "")}</p></body>`);
+      }
+    }
+    if (!who(req)) {
       if (url.pathname.startsWith("/api/")) return json(res, 401, { error: "unauthorized" });
       res.writeHead(401, { "content-type": "text/html; charset=utf-8" });
       res.end(`<!doctype html><meta name=viewport content="width=device-width"><body style="font:16px system-ui;padding:24px;background:#0b0d10;color:#e6e6e6">
@@ -415,14 +602,21 @@ export function createWorkspaceServer(o: ServerOpts): { server: Server; tasks: T
   // --- WebSocket: terminals + live events ------------------------------------
   const wss = new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024 });
   server.on("upgrade", (req, socket, head) => {
-    if (new URL(req.url ?? "/", "http://x").pathname !== "/ws" || !isAuthorized(req, token) || !sameOrigin(req)) {
+    if (new URL(req.url ?? "/", "http://x").pathname !== "/ws" || !who(req) || !sameOrigin(req)) {
       socket.end("HTTP/1.1 401 Unauthorized\r\n\r\n");
       return;
     }
     wss.handleUpgrade(req, socket, head, (ws) => wss.emit("connection", ws, req));
   });
-  wss.on("connection", (ws) => {
+  wss.on("connection", (ws, req: IncomingMessage) => {
     clients.add(ws);
+    // A paired phone's connection: closed at once when that phone is revoked.
+    const me = who(req);
+    if (me?.kind === "device") {
+      const set = deviceSockets.get(me.id) ?? new Set<WebSocket>();
+      deviceSockets.set(me.id, set.add(ws));
+      ws.on("close", () => set.delete(ws));
+    }
     const subs = new Map<string, () => void>();
     let unwatchDiff: (() => void) | undefined;
     let unwatchBrowser: (() => void) | undefined;
@@ -455,6 +649,7 @@ export function createWorkspaceServer(o: ServerOpts): { server: Server; tasks: T
         subs.get(id)?.();
         subs.delete(id);
       } else if (m.t === "input" && typeof m.data === "string") {
+        if (me?.kind === "device") (deviceInput.get(me.id) ?? deviceInput.set(me.id, new Map()).get(me.id)!).set(id, Date.now());
         tasks.write(id, m.data);
       } else if (m.t === "watch-diff") {
         // One live diff per connection: the task shown in the Diff tab.
@@ -492,6 +687,7 @@ export function createWorkspaceServer(o: ServerOpts): { server: Server; tasks: T
     });
   });
 
+  server.on("close", () => awake.dispose()); // give sleep back when Netheron stops
   return { server, tasks, broadcast };
 }
 

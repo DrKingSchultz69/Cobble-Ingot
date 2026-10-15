@@ -11,7 +11,8 @@
   "scripts": {
     "serve": "node packages/daemon/src/cli.ts serve",
     "usage": "node packages/daemon/src/cli.ts usage",
-    "test": "node --test packages/*/test/*.test.ts"
+    "test": "node --test packages/*/test/*.test.ts",
+    "build:exe": "node scripts/build-exe.ts"
   },
   "engines": {
     "node": ">=24"
@@ -23,6 +24,7 @@
     "dompurify": "^3.4.16",
     "marked": "^18.1.0",
     "monaco-editor": "^0.57.0",
+    "qrcode-generator": "^1.4.4",
     "ws": "^8.22.0"
   }
 }

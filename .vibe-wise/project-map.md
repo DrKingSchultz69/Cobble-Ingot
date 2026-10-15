@@ -13,6 +13,7 @@ Netheron: a local workspace that runs several AI coding agents (Claude Code, Cod
 ## Components (implemented)
 - **CLI** `packages/daemon/src/cli.ts` (`mm serve`, `mm usage`, `mm tunnel`): starts everything.
 - **Proxy** `proxy.ts` (port 4141): sits between agents and model APIs, logs each call (tokens, cost, 429s) to SQLite.
+- **Session logs** `sessionlogs.ts`: subscription logins (Claude Pro/Max, ChatGPT plan) skip the proxy (Anthropic 2026 rule); usage is read from the CLIs' own JSONL session logs into the same calls table. API keys still use the proxy. Override: MM_CLAUDE_AUTH / MM_CODEX_AUTH = sub|key.
 - **Workspace server** `server.ts` (port 4142): REST API + one WebSocket; token auth (`auth.ts`); serves the web UI.
 - **TaskManager** `tasks.ts`: creates tasks, worktrees (`worktree.ts`), launches agents in pseudo-terminals (`pty.ts`, `agents.ts`); hand-off, queue, schedules, pipelines, races, evals.
 - **Safety** `checkpoints.ts`, `alarms.ts`, `verify.ts`, `diagnostics.ts`.
@@ -21,6 +22,7 @@ Netheron: a local workspace that runs several AI coding agents (Claude Code, Cod
 - **Research** `packages/research/src/*`: web/paper search features.
 - **Web UI** `apps/web/` (plain JS, xterm, Monaco, service worker for push).
 - **Extras** `push.ts` (web push), `workers.ts` (remote Netheron instances), `profiles.ts` (multiple accounts).
+- **Relay features (2026-10-15)**: `awake.ts` (keep computer awake: on/agent/off), `resources.ts` (memory/CPU per task process tree), `sessions.ts` (past Claude/Codex sessions, resume), `devices.ts` (phone pairing: one-time QR code -> per-phone key, revoke, network access setting), `issues.ts` (GitHub via gh, Linear via API key), automations on the schedule table (repeat hourly/daily/weekdays/weekly, pause/resume/run now, schedule_runs history). UI: `apps/web/skin-relay.css` (default skin), `features.css`, `phone.css`, `lattice.js` (network background); new views Board, Issues, Automations, Sessions, Devices, New task composer, status bar, phone tab bar.
 
 ## Main Flow
 ```
@@ -49,6 +51,10 @@ TaskManager --events--> server --WS--> Browser
 - Step 2 decisions (2026-10-11): learner chose opt-in per task and keep window open after finish; approved AI additions: browser_* MCP tools call the Netheron server with the saved token, JPEG screenshots, ask_user -> Needs you + push, Resume types "Done, continue" into the agent, browser tools auto-approved for Claude, no browser for Pi/omp.
 - Steps: 1 browser core (packages/daemon/src/browser.ts) IMPLEMENTED 2026-10-11; 2 agent tools (browser_* in packages/memory/src/mcp.ts -> /api/tasks/:id/browser* in server.ts) IMPLEMENTED 2026-10-11; 3 Browser tab with live view (screencast over the WebSocket, clickable while the user has control) IMPLEMENTED 2026-10-11.
 - One Chrome window per task (AI proposed after background tabs took 15 s to screenshot; learner chose windows 2026-10-11 so multiple agents can browse at once). Implemented.
+
+## Phone access (designed 2026-10-15, not built)
+- Learner's choices: peer-to-peer VPN (Tailscale/WireGuard) instead of a relay; new phone joins by scanning a QR code; a lost phone's access is revoked.
+- Confirmed details: one-time 5-min QR code with the Tailscale address; per-phone key; Settings → Devices with Revoke (PC or any paired phone); revoke closes live connections; agents keep running, the phone's last-minute actions flagged in Needs you; keep Tailscale key expiry; optional app lock; retire the shared ?token= link.
 
 ## Unknowns
 - Which remaining Solutions.md options to build next, and in what order.

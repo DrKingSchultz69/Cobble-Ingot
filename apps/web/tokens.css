@@ -1,0 +1,76 @@
+/* Netheron design tokens. One structure, two skins: style.css only uses these names,
+   skins (data-skin on <html>) only change their values. Set by applyPrefs() in app.js:
+   <html data-skin="calm|block" data-theme="light|dark" data-motion="off">  */
+
+/* Bundled fonts (SIL OFL, see fonts/), so the look is the same offline and in the .exe. */
+@font-face { font-family: "Geist"; src: url("/fonts/geist.woff2") format("woff2"); font-weight: 100 900; font-display: swap; }
+@font-face { font-family: "JetBrains Mono"; src: url("/fonts/jetbrains-mono.woff2") format("woff2"); font-weight: 100 800; font-display: swap; }
+
+:root {
+  /* colour: Calm, dark */
+  --bg: #0f1115;
+  --panel: #15181d;
+  --panel-2: #1b1f26;
+  --line: #272c35;
+  --text: #e7e9ec;
+  --muted: #949cab;
+  --accent: #8aa4ff;
+  --accent-ink: #0b0d12;
+  --ok: #4cc38a;
+  --warn: #f0b429;
+  --bad: #f2555a;
+  --idle: #c58af9;
+  --add: rgba(76, 195, 138, .14);
+  --del: rgba(242, 85, 90, .14);
+  --shadow: 0 8px 28px rgba(0, 0, 0, .35);
+
+  /* shape */
+  --radius: 8px;
+  --radius-sm: 6px;
+  --bevel: none;          /* Block skin turns buttons into blocks */
+  --bevel-press: none;
+
+  /* type */
+  --font: "Geist", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-head: var(--font);
+  --head-track: -.01em;
+  --mono: "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, monospace;
+
+  /* motion: short, ease-out in, faster ease-in out (~75%) */
+  --dur-1: 100ms;  /* press, hover */
+  --dur-2: 150ms;  /* menus, exits */
+  --dur-3: 200ms;  /* views, toasts in */
+  --dur-4: 250ms;  /* side panels */
+  --ease-out: cubic-bezier(.2, 0, 0, 1);
+  --ease-in: cubic-bezier(.3, 0, 1, 1);
+
+  color-scheme: dark;
+}
+
+/* Calm, light: system light unless dark is picked, or light picked by hand */
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --bg: #f4f5f7; --panel: #ffffff; --panel-2: #eef0f3; --line: #d9dde3; --text: #161a1f; --muted: #555e6b;
+    --accent: #3354e0; --accent-ink: #fff; --ok: #1f8f5a; --warn: #a86b00; --bad: #c9333a; --idle: #8a4bd1;
+    --add: rgba(30, 150, 90, .12); --del: rgba(210, 40, 50, .1); --shadow: 0 8px 28px rgba(20, 30, 50, .14);
+    color-scheme: light;
+  }
+}
+:root[data-theme="light"] {
+  --bg: #f4f5f7; --panel: #ffffff; --panel-2: #eef0f3; --line: #d9dde3; --text: #161a1f; --muted: #555e6b;
+  --accent: #3354e0; --accent-ink: #fff; --ok: #1f8f5a; --warn: #a86b00; --bad: #c9333a; --idle: #8a4bd1;
+  --add: rgba(30, 150, 90, .12); --del: rgba(210, 40, 50, .1); --shadow: 0 8px 28px rgba(20, 30, 50, .14);
+  color-scheme: light;
+}
+
+/* Calm switch: no movement at all (also when Windows asks for less motion) */
+@media (prefers-reduced-motion: reduce) {
+  :root { --dur-1: 0ms; --dur-2: 0ms; --dur-3: 0ms; --dur-4: 0ms; }
+}
+:root[data-motion="off"] { --dur-1: 0ms; --dur-2: 0ms; --dur-3: 0ms; --dur-4: 0ms; }
+:root[data-motion="off"] *, :root[data-motion="off"] *::before, :root[data-motion="off"] *::after {
+  animation-duration: 0ms !important; animation-iteration-count: 1 !important; transition-duration: 0ms !important;
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0ms !important; animation-iteration-count: 1 !important; transition-duration: 0ms !important; }
+}

@@ -1,0 +1,249 @@
+/* Relay skin (default): one living network fills the window, every panel floats over it as smoked glass,
+   the sidebar replaces the top bar on desktop, and a few original Nether touches (embers, the N-portal logo).
+   Only active with <html data-skin="relay">; the Calm and Block skins are untouched. */
+
+:root[data-skin="relay"] {
+  --bg: #08080a;
+  --panel: rgba(20, 20, 24, .56);
+  --panel-2: rgba(255, 255, 255, .06);
+  --line: rgba(255, 255, 255, .09);
+  --text: #ededef;
+  --muted: #a3a3ad;
+  --accent: #e11d2e;
+  --accent-ink: #ffffff;
+  --accent-text: #ff5a67;
+  --accent-hot: #ffb3bb;
+  --accent-deep: #4a0d14;
+  --accent-wash: rgba(225, 29, 46, .14);
+  --node: #5a5a63;
+  --ok: #34d399;
+  --warn: #fbbf24;
+  --bad: #f472b6;
+  --idle: #a5b4fc;
+  --add: rgba(52, 211, 153, .12);
+  --del: rgba(244, 114, 182, .12);
+  --field: rgba(0, 0, 0, .28);
+  --glass-blur: blur(22px) saturate(150%);
+  --glass-hi: inset 0 1px 0 rgba(255, 255, 255, .07);
+  --shadow: 0 18px 50px -24px rgba(0, 0, 0, .9);
+  --glow-a: rgba(225, 29, 46, .16);
+  --glow-b: rgba(99, 102, 241, .10);
+  --radius: 14px;
+  --radius-sm: 10px;
+  color-scheme: dark;
+}
+@media (prefers-color-scheme: light) {
+  :root[data-skin="relay"]:not([data-theme="dark"]) {
+    --bg: #eef0f4; --panel: rgba(255, 255, 255, .62); --panel-2: rgba(17, 17, 19, .05); --line: rgba(17, 17, 19, .1);
+    --text: #111113; --muted: #50505a; --accent: #c8102e; --accent-text: #b0102a; --accent-hot: #ff3347; --accent-deep: #f5c9ce;
+    --accent-wash: rgba(200, 16, 46, .08); --node: #9a9aa6; --ok: #047857; --warn: #8a5a00; --bad: #a3125f; --idle: #4f46e5;
+    --field: rgba(255, 255, 255, .6); --glass-hi: inset 0 1px 0 rgba(255, 255, 255, .8); --shadow: 0 18px 50px -26px rgba(30, 30, 50, .35);
+    --glow-a: rgba(200, 16, 46, .10); --glow-b: rgba(79, 70, 229, .10); color-scheme: light;
+  }
+}
+:root[data-skin="relay"][data-theme="light"] {
+  --bg: #eef0f4; --panel: rgba(255, 255, 255, .62); --panel-2: rgba(17, 17, 19, .05); --line: rgba(17, 17, 19, .1);
+  --text: #111113; --muted: #50505a; --accent: #c8102e; --accent-text: #b0102a; --accent-hot: #ff3347; --accent-deep: #f5c9ce;
+  --accent-wash: rgba(200, 16, 46, .08); --node: #9a9aa6; --ok: #047857; --warn: #8a5a00; --bad: #a3125f; --idle: #4f46e5;
+  --field: rgba(255, 255, 255, .6); --glass-hi: inset 0 1px 0 rgba(255, 255, 255, .8); --shadow: 0 18px 50px -26px rgba(30, 30, 50, .35);
+  --glow-a: rgba(200, 16, 46, .10); --glow-b: rgba(79, 70, 229, .10); color-scheme: light;
+}
+
+/* ---- the background: network canvas + two soft glows + embers (hidden in other skins) */
+#net-bg, .nx-embers, .nx-glow { display: none; }
+:root[data-skin="relay"] { background: var(--bg); }
+:root[data-skin="relay"] body { background: transparent; }
+:root[data-skin="relay"] #net-bg { display: block; position: fixed; inset: 0; width: 100vw; height: 100vh; z-index: -3; }
+:root[data-skin="relay"] .nx-glow { display: block; position: fixed; inset: 0; z-index: -2; pointer-events: none;
+  background: radial-gradient(48vw 40vh at 82% 6%, var(--glow-a), transparent 70%), radial-gradient(40vw 50vh at 8% 96%, var(--glow-b), transparent 70%); }
+:root[data-skin="relay"]:not([data-embers="off"]) .nx-embers { display: block; }
+.nx-embers { position: fixed; inset: 0; z-index: -1; pointer-events: none; overflow: hidden; }
+.nx-embers i { position: absolute; bottom: -12px; width: 4px; height: 4px; background: #ff7a1a; box-shadow: 0 0 8px 1px #ff5a1a; opacity: 0; animation: nx-rise 11s linear infinite; }
+.nx-embers i:nth-child(3n) { background: #ffb347; box-shadow: 0 0 8px 1px #ff9a2a; }
+.nx-embers i:nth-child(5n) { background: #4fd1ff; box-shadow: 0 0 9px 1px #2fb8ff; }
+:root[data-theme="light"] .nx-embers i { box-shadow: none; }
+@keyframes nx-rise { 0% { transform: translate(0, 0); opacity: 0; } 12% { opacity: .85; } 65% { opacity: .45; } 100% { transform: translate(var(--dx, 20px), -105vh); opacity: 0; } }
+.nx-embers i:nth-child(1) { left: 34%; animation-duration: 12.4s; animation-delay: -2.1s; --dx: -25px; }
+.nx-embers i:nth-child(2) { left: 72%; animation-duration: 9.6s; animation-delay: -7.4s; --dx: 22px; width: 3px; height: 3px; }
+.nx-embers i:nth-child(3) { left: 12%; animation-duration: 14.1s; animation-delay: -4.8s; --dx: 38px; }
+.nx-embers i:nth-child(4) { left: 55%; animation-duration: 10.8s; animation-delay: -10.2s; --dx: -12px; width: 5px; height: 5px; }
+.nx-embers i:nth-child(5) { left: 88%; animation-duration: 13.2s; animation-delay: -1.3s; --dx: -40px; }
+.nx-embers i:nth-child(6) { left: 6%; animation-duration: 8.9s; animation-delay: -6.6s; --dx: 10px; width: 3px; height: 3px; }
+.nx-embers i:nth-child(7) { left: 44%; animation-duration: 11.7s; animation-delay: -9.1s; --dx: 22px; }
+.nx-embers i:nth-child(8) { left: 63%; animation-duration: 14.6s; animation-delay: -3.5s; --dx: -25px; width: 5px; height: 5px; }
+.nx-embers i:nth-child(9) { left: 25%; animation-duration: 10.1s; animation-delay: -11.8s; --dx: 38px; }
+.nx-embers i:nth-child(10) { left: 81%; animation-duration: 12.9s; animation-delay: -5.2s; --dx: -12px; width: 3px; height: 3px; }
+.nx-embers i:nth-child(11) { left: 49%; animation-duration: 9.2s; animation-delay: -0.7s; --dx: 10px; }
+.nx-embers i:nth-child(12) { left: 17%; animation-duration: 13.8s; animation-delay: -8.3s; --dx: -40px; }
+.nx-embers i:nth-child(13) { left: 93%; animation-duration: 11.2s; animation-delay: -2.9s; --dx: 22px; width: 5px; height: 5px; }
+.nx-embers i:nth-child(14) { left: 38%; animation-duration: 14.9s; animation-delay: -12.4s; --dx: -12px; }
+
+/* ---- the N-portal logo (all skins) */
+.logo-portal { flex: none; image-rendering: pixelated; border-radius: 2px; box-shadow: 0 0 0 1px #2a1b44, 0 4px 14px -4px #000; }
+.logo-portal .n { transform-box: fill-box; transform-origin: center; filter: drop-shadow(0 0 1.2px #b04bff); animation: nx-open 1.1s cubic-bezier(.2, .9, .25, 1) both; }
+.logo-portal .fill { fill: #8a2be2; animation: nx-swirl 2.8s ease-in-out 1.1s infinite alternate; }
+.logo-portal .sw { fill: #f0d6ff; animation: nx-blink 1.6s steps(2, end) infinite; }
+.logo-portal .sw:nth-of-type(2n) { animation-delay: -.8s; }
+@keyframes nx-open { 0% { transform: scale(.2, 0); opacity: 0; } 55% { transform: scale(1.08, 1.04); opacity: 1; } 100% { transform: scale(1); opacity: 1; } }
+@keyframes nx-swirl { from { fill: #7a22d6; } to { fill: #c45bff; } }
+@keyframes nx-blink { 50% { opacity: .15; } }
+.brand-tag { display: none; font: 500 9.5px/1 var(--mono); letter-spacing: .06em; white-space: nowrap; text-transform: uppercase; color: var(--muted); }
+
+/* ---- the glass recipe */
+:root[data-skin="relay"] .top, :root[data-skin="relay"] .side, :root[data-skin="relay"] .right, :root[data-skin="relay"] .ws-main,
+:root[data-skin="relay"] .doc-main, :root[data-skin="relay"] .home-row, :root[data-skin="relay"] .bell-menu,
+:root[data-skin="relay"] dialog, :root[data-skin="relay"] .toast {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  box-shadow: var(--glass-hi), var(--shadow);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+}
+:root[data-skin="relay"] .bell-menu, :root[data-skin="relay"] dialog { background: color-mix(in srgb, var(--bg) 70%, transparent); }
+
+/* ---- controls: pills, glass fields, red main button with a glow */
+:root[data-skin="relay"] input, :root[data-skin="relay"] select, :root[data-skin="relay"] textarea { background: var(--field); border-color: var(--line); border-radius: var(--radius-sm); }
+:root[data-skin="relay"] input:focus, :root[data-skin="relay"] select:focus, :root[data-skin="relay"] textarea:focus { outline: none; border-color: var(--node); box-shadow: 0 0 0 4px var(--accent-wash); }
+:root[data-skin="relay"] button { border-radius: 999px; background: var(--panel-2); }
+:root[data-skin="relay"] button:hover { border-color: var(--node); }
+:root[data-skin="relay"] button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); box-shadow: 0 8px 24px -10px var(--accent); }
+:root[data-skin="relay"] button.primary:hover { background: color-mix(in srgb, var(--accent) 88%, #fff); }
+:root[data-skin="relay"] button.ghost, :root[data-skin="relay"] .icon-btn, :root[data-skin="relay"] .link-btn { background: none; }
+:root[data-skin="relay"] .icon-btn { border-radius: 999px; }
+:root[data-skin="relay"] .icon-btn:hover { background: var(--panel-2); }
+:root[data-skin="relay"] :focus-visible { outline-color: var(--accent-hot); }
+:root[data-skin="relay"] a, :root[data-skin="relay"] .link-btn { color: var(--accent-text); }
+:root[data-skin="relay"] .seg { border-radius: 999px; padding: 2px; gap: 2px; border-color: var(--line); background: var(--panel-2); }
+:root[data-skin="relay"] .seg button { border-radius: 999px; background: none; }
+:root[data-skin="relay"] .seg button.active { background: var(--panel-2); box-shadow: inset 0 0 0 1px var(--line), 0 0 12px -6px var(--accent); }
+:root[data-skin="relay"] .subtabs button.active, :root[data-skin="relay"] .views button.active { box-shadow: inset 0 -2px 0 var(--accent); }
+:root[data-skin="relay"] .card-title, :root[data-skin="relay"] .col h4, :root[data-skin="relay"] .home-sec, :root[data-skin="relay"] .ide-head { letter-spacing: .08em; }
+:root[data-skin="relay"] kbd { background: var(--field); }
+:root[data-skin="relay"] pre { background: var(--field); }
+
+/* ---- Home over the network */
+:root[data-skin="relay"] .home h2 { font-size: 44px; line-height: 48px; font-weight: 700; letter-spacing: -.035em; text-shadow: 0 2px 30px var(--bg); }
+:root[data-skin="relay"] .home-row { border-left-width: 1px; border-radius: var(--radius); }
+:root[data-skin="relay"] .home-row.st-idle, :root[data-skin="relay"] .home-row.warn, :root[data-skin="relay"] .home-row.bad,
+:root[data-skin="relay"] .home-row.ok, :root[data-skin="relay"] .home-row.st-failed, :root[data-skin="relay"] .home-row.st-done { border-left-color: var(--line); }
+:root[data-skin="relay"] .home-row.st-idle .home-ic { color: var(--idle); text-shadow: 0 0 10px var(--idle); }
+:root[data-skin="relay"] .home-row:hover { border-color: var(--node); background: color-mix(in srgb, var(--panel) 80%, var(--panel-2)); }
+:root[data-skin="relay"] .home-sum::before { content: "▲ "; color: var(--accent-text); } /* "agents below" */
+
+/* ---- terminals and editor stay solid for reading; their frames are glass */
+:root[data-skin="relay"] .pane, :root[data-skin="relay"] .empty-state, :root[data-skin="relay"] .ide, :root[data-skin="relay"] .code-empty { background: transparent; }
+:root[data-skin="relay"] .panes { background: transparent; gap: 0; }
+:root[data-skin="relay"] .panes.split .pane + .pane { border-left: 1px solid var(--line); }
+:root[data-skin="relay"] .tab { border-radius: 999px; border: 1px solid transparent; background: none; margin-bottom: 6px; }
+:root[data-skin="relay"] .tab.active { background: var(--panel-2); border-color: var(--line); }
+:root[data-skin="relay"] .tabs { border-bottom-color: var(--line); padding: 6px 8px 0; }
+:root[data-skin="relay"] .ide-files, :root[data-skin="relay"] .ftabs, :root[data-skin="relay"] .ide-drag, :root[data-skin="relay"] .keybar { background: transparent; }
+
+/* ---- desktop: the top bar becomes a floating glass sidebar, views float beside it */
+@media (min-width: 901px) {
+  :root[data-skin="relay"] body { flex-direction: row; padding: 12px; gap: 12px; }
+  :root[data-skin="relay"] .top { flex-direction: column; align-items: stretch; width: 236px; flex: none; min-height: 0; padding: 14px 10px 10px; gap: 6px; border-radius: 18px; overflow-y: auto; }
+  :root[data-skin="relay"] .brand { padding: 2px 8px 12px; gap: 10px; }
+  :root[data-skin="relay"] .brand-name { display: flex; flex-direction: column; gap: 4px; font: 700 17px/1 var(--font); letter-spacing: -.02em; }
+  :root[data-skin="relay"] .brand-tag { display: block; }
+  :root[data-skin="relay"] .views { flex-direction: column; align-self: stretch; gap: 2px; overflow: visible; }
+  :root[data-skin="relay"] .views button { justify-content: flex-start; gap: 10px; height: 36px; padding: 0 12px; border-radius: 999px; box-shadow: none; font-weight: 500; background: none; border-color: transparent; }
+  :root[data-skin="relay"] .views button:hover { background: var(--panel-2); }
+  :root[data-skin="relay"] .views button.active { background: var(--panel-2); box-shadow: inset 0 0 0 1px var(--line); }
+  :root[data-skin="relay"] .views button.active .nav-ic { color: var(--accent-text); }
+  :root[data-skin="relay"] .views .count { margin-left: auto; color: var(--accent-text); border-color: color-mix(in srgb, var(--accent) 40%, transparent); }
+  :root[data-skin="relay"] .top-right { margin: auto 0 0; flex: none; flex-wrap: wrap; justify-content: flex-start; gap: 4px; padding-top: 10px; border-top: 1px solid var(--line); }
+  :root[data-skin="relay"] .top-right #project { flex: 1 1 100%; max-width: none; min-width: 0; margin-bottom: 4px; }
+  :root[data-skin="relay"] .top-right #project-add { flex: 1 1 auto; }
+  :root[data-skin="relay"] .top-right #conn { margin-left: auto; }
+  :root[data-skin="relay"] .bell-menu { top: auto; bottom: calc(100% + 8px); left: 0; right: auto; transform-origin: bottom left; }
+  :root[data-skin="relay"] .stale { position: fixed; top: 12px; left: 50%; transform: translateX(-50%); z-index: 60; border-radius: 999px; border: 1px solid var(--warn); }
+  :root[data-skin="relay"] .view.active { gap: 12px; min-width: 0; }
+  :root[data-skin="relay"] .side, :root[data-skin="relay"] .right, :root[data-skin="relay"] .ws-main, :root[data-skin="relay"] .doc-main { border-radius: 18px; overflow: hidden; }
+  :root[data-skin="relay"] .side, :root[data-skin="relay"] .doc-main { overflow-y: auto; }
+  :root[data-skin="relay"] .side { border-right: 1px solid var(--line); }
+  :root[data-skin="relay"] .right { border-left: 1px solid var(--line); }
+}
+.nav-ic { width: 16px; height: 16px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; display: none; }
+@media (min-width: 901px) { :root[data-skin="relay"] .nav-ic { display: block; } }
+
+/* ---- phone: keep the top bar, glassed */
+@media (max-width: 900px) {
+  :root[data-skin="relay"] .top { border-radius: 0; border-width: 0 0 1px; }
+}
+
+@media (prefers-reduced-motion: reduce) { .nx-embers { display: none !important; } .logo-portal .n, .logo-portal .fill, .logo-portal .sw { animation: none; } }
+:root[data-motion="off"] .nx-embers { display: none !important; }
+
+/* Text over the network: a soft ground-coloured veil behind Home's content keeps it readable during pulses */
+:root[data-skin="relay"] .home { position: relative; isolation: isolate; }
+:root[data-skin="relay"] .home::before { content: ""; position: absolute; inset: -40px -80px; z-index: -1; pointer-events: none;
+  background: radial-gradient(closest-side, color-mix(in srgb, var(--bg) 85%, transparent), transparent); }
+
+/* ---- New task: its own centred screen (Relay). The wizard form is moved in here by app.js (placeNewTask). */
+.side-new, #view-new { display: none; }
+:root[data-skin="relay"] .side-new { display: flex; align-items: center; justify-content: center; gap: 8px; margin: 0 4px 8px; height: 38px; }
+:root[data-skin="relay"] .side-new .nav-ic { display: block; }
+:root[data-skin="relay"] .side-new kbd { background: transparent; color: var(--accent-ink); border-color: rgba(255, 255, 255, .35); }
+@media (max-width: 900px) { :root[data-skin="relay"] .side-new { display: none; } }
+:root[data-skin="relay"] #view-new.active { display: flex; overflow-y: auto; justify-content: center; align-items: flex-start; }
+.nt-stage { position: relative; isolation: isolate; width: min(800px, 100%); margin: auto; padding: 32px 16px 48px; display: flex; flex-direction: column; gap: 14px; }
+.nt-stage::before { content: ""; position: absolute; inset: -20px -60px; z-index: -1; pointer-events: none;
+  background: radial-gradient(closest-side, color-mix(in srgb, var(--bg) 80%, transparent), transparent); }
+.nt-eyebrow { font: 500 11px/1 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); text-align: center; }
+.nt-head { margin: 0; text-align: center; font: 650 38px/44px var(--font); letter-spacing: -.03em; text-shadow: 0 2px 30px var(--bg); }
+.nt-proj { font: inherit; color: inherit; background: none !important; border: 0 !important; border-bottom: 2px solid var(--accent) !important; border-radius: 0 !important; padding: 0; box-shadow: none !important; }
+.nt-sub { margin: 0 0 6px; text-align: center; }
+#new-task.composer { padding: 14px 14px 12px; border-radius: 22px; gap: 10px; background: var(--panel); border: 1px solid var(--line);
+  box-shadow: var(--glass-hi), var(--shadow); -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur); }
+#new-task.composer:focus-within { border-color: var(--node); box-shadow: var(--glass-hi), var(--shadow), 0 0 0 4px var(--accent-wash); }
+#new-task.composer > .card-title { display: none; }
+#new-task.composer > .wiz-step[data-step="1"] { order: 1; }
+#new-task.composer > .wiz-step[data-step="2"] { order: 2; }
+#new-task.composer > .wiz-steps { order: 3; justify-content: flex-start; }
+#new-task.composer > .wiz-step[data-step="3"] { order: 4; }
+#new-task.composer > .wiz-nav { order: 5; }
+#new-task.composer #nt-prompt { min-height: 96px; border: 0; background: transparent; font-size: 16px; line-height: 24px; resize: none; padding: 4px 6px; box-shadow: none; }
+#new-task.composer .wiz-field { flex-direction: row; align-items: center; gap: 8px; font: 500 12px/1 var(--mono); }
+#new-task.composer .wiz-field select { flex: 0 1 auto; max-width: 60%; }
+#new-task.composer .route-hint { font: 400 12px/16px var(--mono); padding: 0 6px; }
+#new-task.composer .route-hint b { color: var(--accent-text); font-weight: 500; }
+#new-task.composer .wiz-step[data-step="2"] { flex-direction: row; flex-wrap: wrap; align-items: center; gap: 6px; padding-top: 8px; border-top: 1px solid var(--line); }
+#new-task.composer .wiz-step[data-step="2"] > .row { flex: 0 1 auto; gap: 6px; flex-wrap: wrap; }
+#new-task.composer .wiz-step[data-step="2"] select, #new-task.composer .wiz-step[data-step="2"] input:not([type="checkbox"]) { flex: 0 1 auto; height: 34px; border-radius: 999px; padding: 0 12px; }
+#new-task.composer #nt-model { width: 150px; }
+#new-task.composer .budget-row input { width: 64px; }
+#new-task.composer .budget-row label, #new-task.composer #nt-browser-wrap { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12.5px; }
+#new-task.composer .wiz-steps button { flex: none; border-radius: 999px; padding: 6px 12px; font-size: 12.5px; }
+#new-task.composer .wiz-steps button[data-step="1"], #new-task.composer .wiz-steps button[data-step="2"] { display: none; }
+#new-task.composer.extras-open .wiz-steps button[data-step="3"] { color: var(--text); border-color: var(--node); background: var(--panel-2); }
+#new-task.composer .wiz-step[data-step="3"] { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 8px; }
+#new-task.composer .wiz-step[data-step="3"][hidden] { display: none; }
+#new-task.composer .wiz-group { border-radius: 14px; background: var(--field); padding: 10px 12px; }
+#new-task.composer .wiz-group[open] { grid-column: 1 / -1; }
+#new-task.composer .wiz-nav { justify-content: flex-end; }
+#new-task.composer #nt-start { flex: 0 0 auto; min-width: 140px; height: 40px; font-size: 14px; }
+
+/* ---- Task + Code screens (Relay): glass tab pills, quieter pane header, editor tabs with a red underline,
+   the terminal drawer reads as its own glass strip, agent key buttons as pills. */
+:root[data-skin="relay"] .pane-head { border-bottom-color: var(--line); padding: 6px 12px; font-family: var(--mono); }
+:root[data-skin="relay"] .pane-head.focus { color: var(--text); box-shadow: inset 0 -1px 0 color-mix(in srgb, var(--accent) 60%, transparent); }
+:root[data-skin="relay"] .tab-tools button { border-radius: 999px; }
+:root[data-skin="relay"] .ide-files { border-right-color: var(--line); }
+:root[data-skin="relay"] .ide-tree .item { border-radius: 8px; margin: 0 6px; }
+:root[data-skin="relay"] .ide-tree .item.open { background: var(--accent-wash); }
+:root[data-skin="relay"] .ftabs { border-bottom-color: var(--line); }
+:root[data-skin="relay"] .ftab { border-right: 0; border-top: 0; border-radius: 10px 10px 0 0; }
+:root[data-skin="relay"] .ftab.active { background: var(--panel-2); box-shadow: inset 0 -2px 0 var(--accent); }
+:root[data-skin="relay"] .ide-term-wrap { border-top-color: var(--line); }
+:root[data-skin="relay"] .ide-drag { border-bottom-color: var(--line); }
+:root[data-skin="relay"] .ide-drag:hover { box-shadow: inset 0 2px 0 var(--accent); }
+:root[data-skin="relay"] .keybar { border-top-color: var(--line); gap: 6px; }
+:root[data-skin="relay"] .keybar button { border-radius: 999px; font-family: var(--mono); font-size: 12px; }
+:root[data-skin="relay"] .conflict { border-radius: 12px; background: var(--accent-wash); border-color: var(--accent); }
+:root[data-skin="relay"] .banner { border-radius: 12px; }
+:root[data-skin="relay"] .right .subtabs { gap: 4px; padding: 6px 8px; }
+:root[data-skin="relay"] .right .subtabs button { border-radius: 999px; padding: 6px 12px; }
+:root[data-skin="relay"] .right .subtabs button.active { background: var(--panel-2); box-shadow: inset 0 0 0 1px var(--line); }
+:root[data-skin="relay"] .diff, :root[data-skin="relay"] #diff pre { border-radius: 12px; }
+:root[data-skin="relay"] .task.open { box-shadow: inset 2px 0 0 var(--accent); background: var(--panel-2); }

@@ -2,6 +2,9 @@
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+// Status = shape + colour + word (the word sits next to it or in the title).
+const DOT = { starting: "◌", running: "●", idle: "◆", done: "✓", failed: "✕", stopped: "■" };
+const dot = (st) => `<span class="sd s-${esc(st)}" title="${esc(st)}">${DOT[st] ?? "●"}</span>`;
 const store = {
   get: (k, d) => { try { const v = localStorage.getItem("mm." + k); return v == null ? d : JSON.parse(v); } catch { return d; } },
   set: (k, v) => { try { localStorage.setItem("mm." + k, JSON.stringify(v)); } catch {} },
@@ -22,9 +25,10 @@ function toast(text, kind = "", onClick) {
   const t = document.createElement("div");
   t.className = `toast ${kind}`;
   t.textContent = text;
-  t.onclick = () => { onClick?.(); t.remove(); };
+  const close = () => { if (t.classList.contains("out")) return; t.classList.add("out"); setTimeout(() => t.remove(), 160); };
+  t.onclick = () => { onClick?.(); close(); };
   $("#toasts").append(t);
-  setTimeout(() => t.remove(), 7000);
+  setTimeout(close, 7000);
 }
 
 async function busy(btn, fn) {
@@ -61,16 +65,85 @@ const S = {
 // ---------------------------------------------------------------- views
 function showView(v) {
   $$("#views button").forEach((b) => b.classList.toggle("active", b.dataset.view === v));
+  $$("#mtabs button[data-view]").forEach((b) => b.classList.toggle("active", b.dataset.view === v || (v === "new" && false)));
   $$(".view").forEach((s) => s.classList.toggle("active", s.id === `view-${v}`));
   document.body.classList.remove("menu-open");
   store.set("view", v);
   if (v === "home") renderHome();
+  if (v === "new") { placeNewTask(); $("#nt-proj-name").textContent = S.project ? S.project.split(/[\\/]/).pop() : "a project"; wizGo(1); $("#nt-prompt").focus(); }
   if (v === "workspace") requestAnimationFrame(fitAll);
   if (v === "research") loadResearchSide();
   if (v === "learn") loadDocs();
   if (v === "memory") loadMemory();
   if (v === "usage") loadUsage();
+  setTimeout(() => feature(v)); // Relay views (Board, Issues, Automations, Sessions, Devices), defined further down
 }
+// ---------------------------------------------------------------- look: skin, colours, motion (⚙)
+// index.html applies the saved look before the first paint; this keeps the menu, terminals and editor in step.
+const isLight = () => { const t = document.documentElement.dataset.theme; return t ? t === "light" : matchMedia("(prefers-color-scheme: light)").matches; };
+function termTheme() {
+  const cs = getComputedStyle(document.documentElement), v = (n) => cs.getPropertyValue(n).trim();
+  return { background: v("--bg") || "#0f1115", foreground: v("--text"), cursor: v("--text"), selectionBackground: v("--line") };
+}
+function applyPrefs(p = store.get("prefs", {})) {
+  const h = document.documentElement;
+  h.dataset.skin = p.skin || "relay";
+  if (p.theme) h.dataset.theme = p.theme; else delete h.dataset.theme;
+  if (p.motion === "off") h.dataset.motion = "off"; else delete h.dataset.motion;
+  if (p.embers === "off") h.dataset.embers = "off"; else delete h.dataset.embers;
+  for (const g of $$("#prefs-menu .seg")) {
+    const cur = p[g.dataset.pref] || (g.dataset.pref === "skin" ? "relay" : "");
+    $$("button", g).forEach((b) => b.classList.toggle("active", b.dataset.v === cur));
+  }
+  $("meta[name=theme-color]").content = getComputedStyle(h).getPropertyValue("--panel").trim();
+  for (const { term } of S.terms.values()) term.options.theme = termTheme();
+  window.monaco?.editor.setTheme(isLight() ? "vs" : "vs-dark");
+  syncNetwork();
+  placeNewTask();
+}
+// Relay skin: New task is its own centred screen (one box, chips under it, Extras folded). Other skins keep the
+// wizard in the Workspace side panel. It's the same form either way, moved, so every listener stays attached.
+const isRelay = () => document.documentElement.dataset.skin === "relay";
+function placeNewTask() {
+  const f = $("#new-task"), slot = $("#nt-slot"), side = $("#side");
+  if (!f || !slot || !side) return;
+  if (isRelay() && f.parentElement !== slot) { slot.append(f); f.classList.add("composer"); }
+  if (!isRelay() && f.parentElement !== side) { side.prepend(f); f.classList.remove("composer", "extras-open"); }
+  if (typeof wizGo === "function" && $("#new-task").dataset.step) wizGo(+$("#new-task").dataset.step || 1);
+}
+function openNewTask() {
+  if (isRelay()) return showView("new");
+  showView("workspace");
+  if (matchMedia("(max-width: 900px)").matches) document.body.classList.add("menu-open");
+  focusNewTask();
+}
+// Relay skin: the living network behind every screen (lattice.js). It reads its colours from the CSS tokens,
+// pauses when the window is hidden, and stays as one still frame when motion is off.
+let network = null;
+function syncNetwork() {
+  const h = document.documentElement, canvas = $("#net-bg");
+  const want = h.dataset.skin === "relay" && !!window.Lattice && !!canvas;
+  const still = h.dataset.motion === "off" || matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if (network && (!want || network.still !== still)) { network.field.destroy(); network = null; }
+  if (want && !network) network = { still, field: window.Lattice.flow(canvas, { density: 0.9, link: 130, radius: 170, auto: 6, seed: 7, still }) };
+}
+$("#prefs-btn").onclick = (e) => {
+  e.stopPropagation();
+  $("#bell-menu").hidden = true;
+  $("#prefs-menu").hidden = !$("#prefs-menu").hidden;
+};
+$("#prefs-menu").onclick = (e) => {
+  e.stopPropagation();
+  const b = e.target.closest(".seg button");
+  if (!b) return;
+  const p = { ...store.get("prefs", {}), [b.parentElement.dataset.pref]: b.dataset.v };
+  store.set("prefs", p);
+  applyPrefs(p);
+};
+document.addEventListener("click", () => ($("#prefs-menu").hidden = true));
+matchMedia("(prefers-color-scheme: light)").addEventListener("change", () => applyPrefs());
+applyPrefs();
+
 $("#views").onclick = (e) => { const b = e.target.closest("button"); if (b?.dataset.view) showView(b.dataset.view); };
 $("#menu-btn").onclick = () => document.body.classList.toggle("menu-open");
 
@@ -226,6 +299,7 @@ function connect() {
   };
   ws.onmessage = (ev) => {
     const m = JSON.parse(ev.data);
+    onFeatureMessage(m);
     if (m.t === "data" || m.t === "buffer") {
       const t = S.terms.get(m.id);
       if (!t) return;
@@ -334,6 +408,7 @@ function renderBell() {
 $("#bell").onclick = (e) => {
   e.stopPropagation();
   renderBell();
+  $("#prefs-menu").hidden = true;
   $("#bell-menu").hidden = !$("#bell-menu").hidden;
 };
 $("#bell-menu").onclick = (e) => e.stopPropagation();
@@ -444,6 +519,7 @@ $("#new-task").onsubmit = (e) => {
     $("#nt-route").textContent = "";
     S.tasks.set(t.id, t);
     renderBoard();
+    if ($("#view-new").classList.contains("active")) showView("workspace");
     openTask(t.id);
     document.body.classList.remove("menu-open");
     if (notifyState() === "ask") enableNotifications(); // first task: ask once
@@ -456,9 +532,14 @@ function wizGo(n) {
   const f = $("#new-task");
   f.dataset.step = n;
   $$("#nt-steps button").forEach((b) => b.classList.toggle("on", +b.dataset.step === n));
-  $$(".wiz-step", f).forEach((d) => (d.hidden = +d.dataset.step !== n));
-  $("#nt-back").hidden = n === 1;
-  $("#nt-next").hidden = n === 3;
+  if (f.classList.contains("composer")) {
+    $$(".wiz-step", f).forEach((d) => (d.hidden = d.dataset.step === "3" && !f.classList.contains("extras-open")));
+    $("#nt-back").hidden = $("#nt-next").hidden = true;
+  } else {
+    $$(".wiz-step", f).forEach((d) => (d.hidden = +d.dataset.step !== n));
+    $("#nt-back").hidden = n === 1;
+    $("#nt-next").hidden = n === 3;
+  }
   wizSummary();
 }
 // Step labels say what's chosen ("2 Who: Claude Code"), so nothing chosen is out of sight.
@@ -471,7 +552,7 @@ function wizSummary() {
     when !== "now" && "⏰", ($("#nt-race").checked || $("#nt-autohandoff").checked || $("#nt-pipeline").value) && "👥",
     $("#nt-checks").value && "✅", (!$("#nt-isolate").checked || !$("#nt-lean").checked || ($("#nt-worker-wrap").hidden ? "" : $("#nt-worker").value)) && "⚙",
   ].filter(Boolean).join("");
-  $('#nt-steps [data-step="3"]').textContent = `3 Extras${extras ? ": " + extras : ""}`;
+  $('#nt-steps [data-step="3"]').textContent = `${$("#new-task").classList.contains("composer") ? "" : "3 "}Extras${extras ? ": " + extras : ""}`;
   $("#nt-sum-when").textContent = when === "now" ? "" : when === "reset" ? "after limit reset" : "at a time";
   $("#nt-sum-team").textContent = [$("#nt-race").checked && "race", $("#nt-autohandoff").checked && "auto hand-off", $("#nt-pipeline").value && "pipeline"].filter(Boolean).join(", ");
   $("#nt-sum-checks").textContent = $("#nt-checks").value ? $("#nt-checks").selectedOptions[0].textContent.split(":")[0] : "";
@@ -481,7 +562,21 @@ function focusNewTask() {
   wizGo(1);
   $("#nt-prompt").focus();
 }
-$("#nt-steps").onclick = (e) => { const b = e.target.closest("button"); if (b) wizGo(+b.dataset.step); };
+$("#nt-steps").onclick = (e) => {
+  const b = e.target.closest("button");
+  if (!b) return;
+  const f = $("#new-task");
+  if (f.classList.contains("composer")) { f.classList.toggle("extras-open"); wizGo(1); return; } // the only step button shown: Extras
+  wizGo(+b.dataset.step);
+};
+$("#side-new").onclick = () => openNewTask();
+$("#nt-proj-name").onclick = () => { const sel = $("#nt-project"); sel.focus(); sel.showPicker?.(); };
+document.addEventListener("keydown", (e) => {
+  if (e.key.toLowerCase() !== "n" || e.repeat || e.ctrlKey || e.altKey || e.metaKey) return;
+  if (e.target.closest?.("input, textarea, select, [contenteditable], dialog, .xterm, .monaco-editor")) return;
+  e.preventDefault();
+  openNewTask();
+});
 $("#nt-next").onclick = () => wizGo(Math.min(3, +$("#new-task").dataset.step + 1));
 $("#nt-back").onclick = () => wizGo(Math.max(1, +$("#new-task").dataset.step - 1));
 $("#new-task").addEventListener("change", wizSummary);
@@ -506,34 +601,67 @@ function needsYou(t) {
   if (t.status === "done" && now - t.updated < DAY) return { rank: 3, icon: "✅", kind: "ok", text: "Done. Review the changes.", go: "Review" };
   return null;
 }
+const ago = (ms) => {
+  const m = Math.round((Date.now() - ms) / 60000);
+  return m < 1 ? "just now" : m < 60 ? `${m} min ago` : m < 1440 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} d ago`;
+};
 function renderHome() {
   const tasks = [...S.tasks.values()];
   const rows = tasks.map((t) => ({ t, n: needsYou(t) })).filter((r) => r.n).sort((a, b) => a.n.rank - b.n.rank || b.t.updated - a.t.updated);
   const count = $("#home-count");
+  const before = +count.textContent || 0;
   count.hidden = !rows.length;
   count.textContent = rows.length;
+  if (rows.length > before) { count.classList.remove("bump"); void count.offsetWidth; count.classList.add("bump"); } // pulse twice, only when something new arrives
   if (!$("#view-home").classList.contains("active")) return;
-  $("#home-title").textContent = rows.length ? `Needs you (${rows.length})` : "Nothing needs you";
-  $("#home-list").innerHTML = rows.map(({ t, n }) => `<div class="home-row ${n.kind}" data-id="${t.id}">
-      <span class="home-ic">${n.icon}</span>
-      <div class="grow"><div class="home-t">${esc(t.title)}</div><div class="muted small">${esc(n.text)}</div></div>
-      <button class="${n.rank < 2 ? "primary" : ""}">${n.go}</button></div>`).join("")
-    || `<p class="muted home-calm">All quiet. Agents show up here when they need a decision from you.</p>`;
-  const running = tasks.filter((t) => ["starting", "running"].includes(t.status)).length;
+  $("#home-title").textContent = rows.length ? "Needs you" : "Nothing needs you";
+  const seen = S.homeSeen ?? new Set();
+  S.homeSeen = new Set(rows.map(({ t, n }) => `${t.id}:${n.rank}`));
+  const html = rows.map(({ t, n }, i) => `<div class="home-row ${n.kind} st-${t.status}${n.rank < 2 ? " urgent" : ""}${seen.has(`${t.id}:${n.rank}`) ? "" : " fresh"}" data-id="${t.id}">
+      ${i < 3 ? `<kbd class="home-key">${i + 1}</kbd>` : `<span class="home-key"></span>`}
+      <div class="grow">
+        <div class="home-line"><span class="home-ic">${dot(t.status)}</span><span class="home-t">${esc(t.title)}</span>
+          <span class="home-meta"><span class="sep">·</span>${esc(t.status)}<span class="sep">·</span>${esc(t.agent)}${t.model ? `<span class="sep">·</span>${esc(t.model)}` : ""}<span class="sep">·</span>${ago(t.updated)}</span></div>
+        <div class="home-why">${esc(n.text)}</div></div>
+      <div class="home-go"><button class="${i === 0 ? "primary" : "ghost"}">${n.go}</button></div></div>`).join("")
+    || `<div class="home-empty"><p class="muted">Agents are quiet. Start a task and Netheron will tell you when it needs you.</p></div>`;
+  if (html !== S.homeHtml) $("#home-list").innerHTML = S.homeHtml = html;
+  $("#view-home").classList.toggle("is-empty", !rows.length);
+  $("#home-new").classList.toggle("primary", !rows.length); // one main button per screen
+  const hint = $("#home-hint");
+  hint.hidden = !rows.length;
+  hint.innerHTML = rows.length === 1 ? "Press <kbd>1</kbd> to open it" : `Press <kbd>1</kbd>–<kbd>${Math.min(3, rows.length)}</kbd> to open`;
+  const runningList = tasks.filter((t) => ["starting", "running"].includes(t.status)).sort((a, b) => b.updated - a.updated);
+  const running = runningList.length;
   const sched = (S.schedule || []).length;
-  $("#home-sum").textContent = [running ? `${running} running` : "nothing running", sched && `${sched} scheduled`, `${tasks.length} task${tasks.length === 1 ? "" : "s"} in total`].filter(Boolean).join(" · ");
+  $("#home-sum").textContent = [rows.length ? `${rows.length} waiting` : "", running ? `${running} running` : "nothing running", sched && `${sched} scheduled`, `${tasks.length} task${tasks.length === 1 ? "" : "s"} in total`].filter(Boolean).join(" · ");
+  const run = $("#home-running");
+  run.hidden = !running;
+  const runHtml = running ? `<div class="home-sec">Running</div>${runningList.slice(0, 6).map((t) => `<div class="home-run" data-id="${t.id}">${dot(t.status)}<span class="home-t">${esc(t.title)}</span><span class="muted">· ${ago(t.created ?? t.updated).replace(" ago", "")}</span></div>`).join("")}` : "";
+  if (runHtml !== S.homeRunHtml) run.innerHTML = S.homeRunHtml = runHtml;
 }
+$("#home-running").onclick = (e) => {
+  const r = e.target.closest(".home-run");
+  if (!r) return;
+  showView("workspace");
+  openTask(r.dataset.id);
+};
 $("#home-list").onclick = (e) => {
   const r = e.target.closest(".home-row");
   if (!r) return;
   showView("workspace");
   openTask(r.dataset.id);
 };
-$("#home-new").onclick = () => {
+document.addEventListener("keydown", (e) => {
+  if (!/^[1-3]$/.test(e.key) || e.repeat || e.ctrlKey || e.altKey || e.metaKey) return;
+  if (!$("#view-home").classList.contains("active") || e.target.closest?.("input, textarea, select, [contenteditable], dialog")) return;
+  const r = $$("#home-list .home-row")[+e.key - 1];
+  if (!r) return;
+  e.preventDefault();
   showView("workspace");
-  if (matchMedia("(max-width: 900px)").matches) document.body.classList.add("menu-open");
-  focusNewTask();
-};
+  openTask(r.dataset.id);
+});
+$("#home-new").onclick = () => openNewTask();
 
 // ---------------------------------------------------------------- board
 const COLS = [
@@ -548,7 +676,7 @@ function renderBoard() {
     ? `<div class="col"><h4>Scheduled <span>${S.schedule.length}</span></h4>${S.schedule.map((s) => `<div class="sched-item"><div class="t">🌙 ${esc(s.title)}</div><div class="m">${new Date(s.run_at).toLocaleString([], { dateStyle: "short", timeStyle: "short" })}${s.repeat ? " · daily" : ""}${s.when === "reset" ? " · after limit reset" : ""} <button class="link-btn" data-unschedule="${s.id}">cancel</button></div></div>`).join("")}</div>`
     : "";
   const remote = (S.workerTasks || []).map((r) => `<div class="col"><h4>🖥 ${esc(r.worker.name)} <span>${r.online ? r.tasks.length : "offline"}</span></h4>${
-    r.online ? r.tasks.map((t) => `<div class="task remote" data-worker="${r.worker.id}" data-rtask="${esc(t.id)}" title="Opens ${esc(r.worker.name)}'s Netheron in a new tab"><div class="t">${esc(t.title)}</div><div class="m"><span class="s-${esc(t.status)}">●</span>${esc(t.agent)}<span class="badge">${esc(t.status)}</span></div></div>`).join("") || `<p class="muted small">No tasks.</p>`
+    r.online ? r.tasks.map((t) => `<div class="task remote" data-worker="${r.worker.id}" data-rtask="${esc(t.id)}" title="Opens ${esc(r.worker.name)}'s Netheron in a new tab"><div class="t">${esc(t.title)}</div><div class="m">${dot(t.status)}${esc(t.agent)}<span class="badge">${esc(t.status)}</span></div></div>`).join("") || `<p class="muted small">No tasks.</p>`
       : `<p class="muted small">${esc(r.error)}</p>`}</div>`).join("");
   $("#board").innerHTML = sched + remote + COLS.map(([name, sts]) => {
     const list = tasks.filter((t) => sts.includes(t.status));
@@ -559,9 +687,9 @@ function renderBoard() {
 }
 function taskCard(t) {
   const open = S.panes.includes(t.id) ? "open" : "";
-  return `<div class="task ${open}" data-id="${t.id}">
-    <div class="t">${esc(t.title)}</div>
-    <div class="m"><span class="s-${t.status}">●</span>${esc(t.agent)}${t.model ? " · " + esc(t.model) : ""}<span class="badge">${esc(t.status)}</span>${t.browser_wait ? (t.browser_wait === "You took over" ? '<span class="badge" title="You are driving the browser">🌐 you&#39;re driving</span>' : '<span class="badge warn" title="Needs you in the browser">🌐 needs you</span>') : ""}</div>
+  return `<div class="task st-${esc(t.status)} ${open}" data-id="${t.id}">
+    <div class="t">${dot(t.status)}<span>${esc(t.title)}</span></div>
+    <div class="m">${esc(t.agent)}${t.model ? `<span class="sep">·</span>${esc(t.model)}` : ""}<span class="sep">·</span>${esc(t.status)}<span class="sep">·</span>${ago(t.updated).replace(" ago", "")}${t.browser_wait ? (t.browser_wait === "You took over" ? '<span class="badge" title="You are driving the browser">🌐 you&#39;re driving</span>' : '<span class="badge warn" title="Needs you in the browser">🌐 needs you</span>') : ""}</div>
   </div>`;
 }
 $("#board").onclick = async (e) => {
@@ -613,7 +741,7 @@ function persistLayout() {
 function renderTabs() {
   const tabs = S.open.filter((id) => S.tasks.has(id)).map((id) => {
     const t = S.tasks.get(id);
-    return `<div class="tab ${S.panes[S.focus] === id ? "active" : ""}" data-id="${id}"><span class="s-${t.status}">●</span><span>${esc(t.title.slice(0, 28))}</span><span class="x" data-close="${id}">×</span></div>`;
+    return `<div class="tab ${S.panes[S.focus] === id ? "active" : ""}" data-id="${id}">${dot(t.status)}<span>${esc(t.title.slice(0, 28))}</span><span class="x" data-close="${id}">×</span></div>`;
   });
   const code = S.mode === "code";
   $("#tabs").innerHTML = tabs.join("") + `<div class="tab-tools">
@@ -668,7 +796,7 @@ function termFor(id) {
     fontSize: matchMedia("(max-width: 900px)").matches ? 12 : 13,
     cursorBlink: true,
     scrollback: 10000,
-    theme: { background: getComputedStyle(document.body).getPropertyValue("--bg").trim() || "#0d0f12" },
+    theme: termTheme(),
   });
   const fit = new FitAddon.FitAddon();
   term.loadAddon(fit);
@@ -1326,7 +1454,7 @@ async function loadBrief() {
   try {
     const r = await api(`/api/brief?hours=${$("#us-brief-hours").value}`);
     box.innerHTML = r.tasks.length
-      ? `<div class="list">${r.tasks.map((t) => `<div class="brief-row"><span class="s-${esc(t.status)}">●</span> <b>${esc(t.title)}</b> · ${esc(t.agent)}${t.model ? " " + esc(t.model) : ""} · ${esc(t.status)}${t.handoffTo ? " · handed off" : ""} · $${t.costUsd.toFixed(2)}${t.checks ? ` · checks ${esc(t.checks)}` : ""}${t.alerts.length ? `<div class="muted small">${t.alerts.map(esc).join("<br>")}</div>` : ""} <a href="#" data-open="${esc(t.id)}">open</a></div>`).join("")}</div>`
+      ? `<div class="list">${r.tasks.map((t) => `<div class="brief-row">${dot(t.status)} <b>${esc(t.title)}</b> · ${esc(t.agent)}${t.model ? " " + esc(t.model) : ""} · ${esc(t.status)}${t.handoffTo ? " · handed off" : ""} · $${t.costUsd.toFixed(2)}${t.checks ? ` · checks ${esc(t.checks)}` : ""}${t.alerts.length ? `<div class="muted small">${t.alerts.map(esc).join("<br>")}</div>` : ""} <a href="#" data-open="${esc(t.id)}">open</a></div>`).join("")}</div>`
       : `<p class="muted small">Nothing ran in this period.</p>`;
   } catch (e) { box.innerHTML = `<p class="muted small">${esc(e.message)}</p>`; }
 }
@@ -1415,7 +1543,7 @@ function loadMonaco() {
 async function ensureEditor() {
   const monaco = await loadMonaco();
   if (C.editor) return monaco;
-  const light = matchMedia("(prefers-color-scheme: light)").matches;
+  const light = isLight();
   C.editor = monaco.editor.create($("#code-editor"), {
     theme: light ? "vs" : "vs-dark", automaticLayout: true, minimap: { enabled: true }, fontSize: 13,
     scrollBeyondLastLine: false, smoothScrolling: true, cursorSmoothCaretAnimation: "on", padding: { top: 8 },
@@ -2025,3 +2153,329 @@ async function boot() {
   wizGo(1);
 }
 boot().catch((e) => toast(e.message, "bad"));
+
+// ================================================================ Relay features: Board, Issues, Automations, Sessions,
+// Devices and the status bar. Each view loads when shown and refreshes from live WebSocket events.
+const projName = (p) => (p ? String(p).split(/[\\/]/).pop() : "");
+const sig = (agent) => `<span class="nx-sig" title="${esc(agent)}">${esc(({ claude: "C", codex: "X", opencode: "O", pi: "P", omp: "P", shell: "$", auto: "A" })[agent] ?? (agent || "?")[0].toUpperCase())}</span>`;
+const segValue = (sel) => $(`${sel} button.active`)?.dataset.v;
+function segInit(sel, onChange) {
+  $(sel).onclick = (e) => {
+    const b = e.target.closest("button");
+    if (!b?.dataset.v) return;
+    $$(`${sel} button`).forEach((x) => x.classList.toggle("active", x === b));
+    onChange(b.dataset.v);
+  };
+}
+function feature(v) {
+  if (v === "board") renderKanban();
+  if (v === "issues") loadIssues();
+  if (v === "automations") loadAutomations();
+  if (v === "sessions") loadSessions();
+  if (v === "devices") loadDevices();
+}
+function onFeatureMessage(m) {
+  if (m.t === "task" || m.t === "removed") { if ($("#view-board").classList.contains("active")) renderKanban(); scheduleStatus(); }
+  if (m.t === "schedule" && $("#view-automations").classList.contains("active")) loadAutomations();
+  if (m.t === "devices" && $("#view-devices").classList.contains("active")) loadDevices();
+  if (m.t === "awake" && S.status) { S.status.awake = m.awake; renderStatus(); }
+}
+$$("[data-go-new]").forEach((b) => (b.onclick = () => openNewTask()));
+const goTask = (id) => { showView("workspace"); openTask(id); };
+
+// ---------------------------------------------------------------- Board: every task by where it stands
+const KB = [
+  ["Waiting for you", ["idle"], "var(--idle)"],
+  ["Running", ["starting", "running"], "var(--accent)"],
+  ["Done", ["done"], "var(--ok)"],
+  ["Failed · stopped", ["failed", "stopped"], "var(--warn)"],
+];
+function renderKanban() {
+  const tasks = [...S.tasks.values()].sort((a, b) => b.updated - a.updated);
+  $("#kb-sum").textContent = `${tasks.length} task${tasks.length === 1 ? "" : "s"}`;
+  $("#kb").innerHTML = KB.map(([name, sts, color]) => {
+    const list = tasks.filter((t) => sts.includes(t.status));
+    return `<section class="kb-col" style="--c:${color}"><header><i></i><b>${name}</b><span class="muted">${list.length}</span></header>
+      <div class="kb-cards">${list.map((t) => `<article class="kb-card" data-id="${esc(t.id)}" tabindex="0">
+        <div class="kb-t">${esc(t.title)}</div>
+        <div class="kb-m">${sig(t.agent)}<span class="tag">${esc(projName(t.repo))}</span>${t.branch ? `<span class="muted">${esc(t.branch)}</span>` : ""}</div>
+        <div class="kb-m muted">${esc(t.model || t.agent)} · ${ago(t.updated)}</div></article>`).join("") || `<div class="kb-empty">Nothing here</div>`}</div></section>`;
+  }).join("");
+}
+$("#kb").onclick = (e) => { const c = e.target.closest(".kb-card"); if (c) goTask(c.dataset.id); };
+$("#kb").onkeydown = (e) => { const c = e.target.closest(".kb-card"); if (c && e.key === "Enter") goTask(c.dataset.id); };
+
+// ---------------------------------------------------------------- Issues: GitHub (gh) and Linear -> tasks
+S.issues = [];
+async function loadIssues() {
+  const source = segValue("#is-source"), kind = segValue("#is-kind");
+  $("#is-kind").hidden = source !== "github";
+  $("#is-list").innerHTML = `<p class="muted">Loading…</p>`;
+  try {
+    const conn = await api(`/api/integrations?project=${encodeURIComponent(S.project || "")}`);
+    $("#is-conn").textContent = source === "github" ? (conn.github.connected ? `GitHub · ${conn.github.user} · ${projName(S.project) || "no project"}` : conn.github.error)
+      : source === "linear" ? (conn.linear.connected ? "Linear · connected" : "Linear isn't connected yet") : "Jira isn't connected yet";
+    $("#is-linear-form").hidden = !(source === "linear" && !conn.linear.connected);
+    if (source === "jira") return ($("#is-list").innerHTML = `<p class="muted">Jira support comes next. GitHub and Linear work now.</p>`);
+    if (source === "linear" && !conn.linear.connected) return ($("#is-list").innerHTML = "");
+    const r = await api(`/api/issues?source=${source}&kind=${kind}&project=${encodeURIComponent(S.project || "")}`);
+    S.issues = r.issues;
+    renderIssues();
+  } catch (e) {
+    $("#is-list").innerHTML = `<p class="muted">${esc(e.message)}</p>`;
+  }
+}
+function renderIssues() {
+  const q = $("#is-q").value.trim().toLowerCase();
+  const list = S.issues.filter((i) => !q || `${i.key} ${i.title} ${i.labels.join(" ")}`.toLowerCase().includes(q));
+  $("#is-list").innerHTML = list.length ? `<div class="nx-table"><table><thead><tr><th>Key</th><th>Title</th><th>Labels</th><th>State</th><th>Who</th><th>Updated</th><th></th></tr></thead><tbody>
+    ${list.map((i, n) => `<tr><td class="mono muted">${esc(i.key)}</td><td><a href="${esc(i.url)}" target="_blank" rel="noopener">${esc(i.title)}</a></td>
+      <td>${i.labels.map((l) => `<span class="tag">${esc(l)}</span>`).join(" ")}</td><td><span class="tag">${esc(i.state)}</span></td>
+      <td class="muted">${esc(i.who)}</td><td class="muted small">${i.updated ? ago(i.updated) : ""}</td>
+      <td><button class="ghost is-start" data-n="${S.issues.indexOf(i)}">Start task →</button></td></tr>`).join("")}</tbody></table></div>`
+    : `<p class="muted">${S.issues.length ? "No matches." : "No open items."}</p>`;
+}
+segInit("#is-source", loadIssues);
+segInit("#is-kind", loadIssues);
+$("#is-refresh").onclick = loadIssues;
+$("#is-q").oninput = renderIssues;
+$("#is-linear-form").onsubmit = (e) => {
+  e.preventDefault();
+  busy(e.submitter, async () => { await api("/api/integrations/linear", { body: { key: $("#is-linear-key").value } }); $("#is-linear-key").value = ""; toast("Linear connected.", "ok"); loadIssues(); });
+};
+$("#is-list").onclick = (e) => {
+  const b = e.target.closest(".is-start");
+  if (!b) return;
+  const i = S.issues[+b.dataset.n], source = segValue("#is-source");
+  if (!S.project) return toast("Pick a project folder first.", "bad");
+  const how = source === "github" ? `Read it first with \`gh ${segValue("#is-kind") === "prs" ? "pr" : "issue"} view ${i.key.slice(1)}\`.` : `Full description: ${i.url}`;
+  busy(b, async () => {
+    const t = await api("/api/tasks", { body: { prompt: `Work on ${source === "github" ? "GitHub" : "Linear"} ${i.key}: ${i.title}\n\n${how}\n${i.url}`, title: `${i.key} ${i.title}`.slice(0, 80), agent: "auto", repo: S.project, isolate: true } });
+    S.tasks.set(t.id, t);
+    goTask(t.id);
+  });
+};
+
+// ---------------------------------------------------------------- Automations: scheduled tasks you manage
+const REPEAT = { hourly: "every hour", daily: "every day", weekdays: "weekdays", weekly: "every week", "": "once" };
+const TEMPLATES = [
+  { kind: "Repo health", title: "Weekday repo audit", desc: "Check dependencies, failing tests and risky open changes each weekday.", repeat: "weekdays", hour: 9, prompt: "Audit this repo: outdated or vulnerable dependencies, failing tests, and risky uncommitted or unmerged changes. Summarise what needs me, most urgent first. Don't change code." },
+  { kind: "Release prep", title: "Release readiness", desc: "A weekly risk summary from the current project state.", repeat: "weekly", hour: 8, prompt: "Prepare a release readiness summary: open bugs, failing checks, unmerged worktrees and anything half-done. End with go / no-go and why." },
+  { kind: "Recurring review", title: "Daily change review", desc: "Read the last day of agent work and flag correctness, UX and test gaps.", repeat: "daily", hour: 18, prompt: "Review everything changed in this repo in the last 24 hours (git log and diffs). Flag correctness bugs, UX problems and missing tests, with file and line." },
+  { kind: "Maintenance", title: "Hourly queue check", desc: "Look for stuck work, stale generated files and failed local checks.", repeat: "hourly", hour: null, prompt: "Run the project's checks. If anything fails, find the cause and report it in three lines. Don't fix anything." },
+];
+$("#au-tpls").innerHTML = TEMPLATES.map((t, i) => `<button class="au-tpl" data-i="${i}"><span class="au-kind">${t.kind}</span><b>${t.title}</b><span class="muted small">${t.desc}</span><span class="au-when">${REPEAT[t.repeat]}${t.hour != null ? ` · ${String(t.hour).padStart(2, "0")}:00` : ""}</span></button>`).join("");
+async function loadAutomations() {
+  const tab = segValue("#au-tabs");
+  try {
+    const r = await api("/api/automations");
+    $("#au-tpl-wrap").hidden = tab !== "list";
+    if (tab === "runs") {
+      $("#au-list").innerHTML = r.runs.length ? `<div class="nx-list">${r.runs.map((x) => `<div class="nx-row" ${x.task ? `data-task="${esc(x.task)}"` : ""}>
+        ${x.error ? `<span class="sd s-failed">✕</span>` : dot(x.status || "done")}<span class="grow"><b>${esc(x.title)}</b><span class="muted small"> · ${new Date(x.ts).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}</span>
+        ${x.error ? `<div class="small" style="color:var(--bad)">${esc(x.error)}</div>` : ""}</span><span class="muted small">${esc(x.agent || "")} ${esc(x.status || "")}</span></div>`).join("")}</div>`
+        : `<p class="muted">No runs yet.</p>`;
+      return;
+    }
+    $("#au-list").innerHTML = r.automations.length ? `<div class="nx-list">${r.automations.map((a) => `<div class="nx-row" data-sid="${a.id}">
+      ${sig(a.agent)}<span class="grow"><b>${esc(a.title)}</b><div class="muted small mono">${esc(REPEAT[a.repeat] ?? a.repeat)} · next ${new Date(a.run_at).toLocaleString([], { weekday: "short", hour: "2-digit", minute: "2-digit" })} · ${esc(projName(a.repo))} · ${a.runs} run${a.runs === 1 ? "" : "s"}</div></span>
+      <span class="tag">${esc(a.status === "waiting" ? "on" : a.status)}</span>
+      <button class="ghost" data-act="run">Run now</button>
+      ${a.status === "paused" ? `<button class="ghost" data-act="resume">Resume</button>` : a.status === "waiting" ? `<button class="ghost" data-act="pause">Pause</button>` : ""}
+      <button class="ghost" data-act="delete" title="Delete">✕</button></div>`).join("")}</div>`
+      : `<p class="muted">No automations yet. Start from a template below, or make your own.</p>`;
+  } catch (e) { $("#au-list").innerHTML = `<p class="muted">${esc(e.message)}</p>`; }
+}
+segInit("#au-tabs", loadAutomations);
+$("#au-list").onclick = async (e) => {
+  const row = e.target.closest(".nx-row");
+  const b = e.target.closest("button[data-act]");
+  if (row?.dataset.task && !b) return goTask(row.dataset.task);
+  if (!b || !row) return;
+  const sid = row.dataset.sid, act = b.dataset.act;
+  if (act === "delete" && b.dataset.sure !== "1") { b.dataset.sure = "1"; b.textContent = "Delete?"; setTimeout(() => { b.dataset.sure = ""; b.textContent = "✕"; }, 3000); return; }
+  await busy(b, async () => {
+    if (act === "delete") await api(`/api/automations/${sid}`, { method: "DELETE" });
+    else if (act === "run") { const t = await api(`/api/automations/${sid}/run`, { body: {} }); S.tasks.set(t.id, t); toast("Started. It's on the Board.", "ok"); }
+    else await api(`/api/automations/${sid}/${act}`, { body: {} });
+    loadAutomations();
+  });
+};
+const nextAt = (hour) => {
+  const d = new Date();
+  if (hour == null) { d.setMinutes(0, 0, 0); d.setHours(d.getHours() + 1); }
+  else { d.setHours(hour, 0, 0, 0); if (d <= new Date()) d.setDate(d.getDate() + 1); }
+  return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+};
+function openAutomation(t) {
+  $("#au-title").value = t?.title ?? "";
+  $("#au-prompt").value = t?.prompt ?? "";
+  $("#au-repeat").value = t?.repeat ?? "weekdays";
+  $("#au-at").value = nextAt(t ? t.hour : 9);
+  $("#au-project").innerHTML = [...new Set([S.project, ...S.projects].filter(Boolean))].map((p) => `<option value="${esc(p)}" ${p === S.project ? "selected" : ""}>${esc(projName(p))} — ${esc(p)}</option>`).join("");
+  $("#au-dlg").showModal();
+}
+$("#au-new").onclick = () => openAutomation();
+$("#au-tpls").onclick = (e) => { const b = e.target.closest(".au-tpl"); if (b) openAutomation(TEMPLATES[+b.dataset.i]); };
+$("#au-form").onsubmit = (e) => {
+  if (e.submitter?.value !== "create") return;
+  e.preventDefault();
+  busy(e.submitter, async () => {
+    await api("/api/automations", { body: {
+      title: $("#au-title").value, prompt: $("#au-prompt").value, agent: $("#au-agent").value, repo: $("#au-project").value,
+      repeat: $("#au-repeat").value, at: new Date($("#au-at").value).toISOString(), budgetUsd: Number($("#au-budget").value) || 0, isolate: $("#au-isolate").checked,
+    } });
+    $("#au-dlg").close();
+    toast("Automation saved. It runs on its own until you pause it.", "ok");
+    loadAutomations();
+  });
+};
+
+// ---------------------------------------------------------------- Sessions: past Claude / Codex sessions, resumable
+async function loadSessions() {
+  $("#ss-list").innerHTML = `<div class="nx-skel"></div><div class="nx-skel"></div><div class="nx-skel"></div>`;
+  try {
+    const under = segValue("#ss-scope") === "project" && S.project ? S.project : "";
+    const r = await api(`/api/sessions?under=${encodeURIComponent(under)}&q=${encodeURIComponent($("#ss-q").value.trim())}`);
+    S.pastSessions = r.sessions;
+    $("#ss-list").innerHTML = r.sessions.length ? `<div class="nx-list">${r.sessions.map((s, i) => `<div class="nx-row">
+      ${sig(s.agent)}<span class="grow"><b>${esc(s.title)}</b><div class="muted small mono">${esc(s.agent)} · ${esc(s.cwd)} · ${ago(s.updated)}</div></span>
+      <button class="ghost ss-resume" data-i="${i}">Resume</button></div>`).join("")}</div>`
+      : `<p class="muted">No sessions found${under ? " for this project. Try All" : ""}.</p>`;
+  } catch (e) { $("#ss-list").innerHTML = `<p class="muted">${esc(e.message)}</p>`; }
+}
+segInit("#ss-scope", loadSessions);
+$("#ss-refresh").onclick = loadSessions;
+let ssTimer;
+$("#ss-q").oninput = () => { clearTimeout(ssTimer); ssTimer = setTimeout(loadSessions, 300); };
+$("#ss-list").onclick = (e) => {
+  const b = e.target.closest(".ss-resume");
+  if (!b) return;
+  const s = S.pastSessions[+b.dataset.i];
+  busy(b, async () => { const t = await api("/api/sessions/resume", { body: s }); S.tasks.set(t.id, t); goTask(t.id); });
+};
+
+// ---------------------------------------------------------------- Devices: pair a phone with a QR code, revoke
+async function loadDevices() {
+  try {
+    const r = await api("/api/devices");
+    const live = r.devices.filter((d) => !d.revoked_at);
+    const net = r.network;
+    $("#dv-list").innerHTML = `<div class="nx-list dv-net"><div class="nx-row"><span class="nx-dev">⇄</span><span class="grow"><b>Network access</b>
+        <div class="muted small">${net.on ? (net.listening ? "On: paired phones can reach this PC over Tailscale or Wi-Fi." : "On after a restart: close Netheron and open it again.") : "Off: Netheron only answers on this PC, so phones can't connect."}</div></span>
+        <button class="${net.on ? "" : "primary"}" id="dv-net" data-on="${net.on ? 0 : 1}">${net.on ? "Turn off" : "Turn on"}</button></div></div>
+      <div class="nx-list">
+      <div class="nx-row"><span class="nx-dev">PC</span><span class="grow"><b>This PC</b> <span class="muted small">${r.me === "owner" ? "· you're here" : ""}</span><div class="muted small mono">owner · the main key</div></span><span class="tag">owner</span></div>
+      ${r.devices.map((d) => `<div class="nx-row ${d.revoked_at ? "dim" : ""}" data-id="${esc(d.id)}"><span class="nx-dev">▯</span>
+        <span class="grow"><b>${esc(d.name)}</b> <span class="muted small">${r.me === d.id ? "· this device" : ""}</span>
+        <div class="muted small mono">paired ${ago(d.created)} · ${d.revoked_at ? `revoked ${ago(d.revoked_at)}` : `last seen ${ago(d.last_seen)}`}</div></span>
+        ${d.revoked_at ? `<span class="tag">revoked</span>` : `<button class="ghost dv-rename">Rename</button><button class="dv-revoke">Revoke</button>`}</div>`).join("")}</div>
+      ${live.length ? "" : `<p class="muted small">No phones paired yet.</p>`}
+      ${r.addresses.length ? `<p class="muted small">Reachable at ${r.addresses.map((a) => `<span class="mono">${esc(a.ip)}</span> (${a.kind === "tailscale" ? "Tailscale" : "Wi-Fi"})`).join(", ")}</p>` : ""}`;
+  } catch (e) { $("#dv-list").innerHTML = `<p class="muted">${esc(e.message)}</p>`; }
+}
+$("#dv-list").onclick = async (e) => {
+  const nb = e.target.closest("#dv-net");
+  if (nb) return busy(nb, async () => { const r = await api("/api/network", { body: { on: nb.dataset.on === "1" } }); toast(r.restartNeeded ? "Saved. Restart Netheron to apply it." : "Saved.", "ok"); loadDevices(); });
+  const row = e.target.closest(".nx-row[data-id]");
+  if (!row) return;
+  if (e.target.closest(".dv-rename")) {
+    const name = prompt("Name for this device", row.querySelector("b").textContent);
+    if (name) { await api(`/api/devices/${row.dataset.id}/rename`, { body: { name } }); loadDevices(); }
+    return;
+  }
+  const b = e.target.closest(".dv-revoke");
+  if (!b) return;
+  if (b.dataset.sure !== "1") { b.dataset.sure = "1"; b.textContent = "Revoke now?"; b.classList.add("primary"); setTimeout(() => { b.dataset.sure = ""; b.textContent = "Revoke"; b.classList.remove("primary"); }, 4000); return; }
+  await busy(b, async () => { await api(`/api/devices/${row.dataset.id}/revoke`, { body: {} }); toast("Revoked: its key is gone and its connection was closed.", "ok"); loadDevices(); });
+};
+let pairTimer;
+async function newPairing() {
+  clearInterval(pairTimer);
+  const p = await api("/api/devices/pair", { body: {} });
+  const qr = qrcode(0, "M");
+  qr.addData(p.url);
+  qr.make();
+  $("#dv-qr").innerHTML = qr.createSvgTag({ cellSize: 6, margin: 3, scalable: true });
+  $("#dv-url").textContent = p.url;
+  $("#dv-hint").textContent = p.hint || (p.via === "tailscale" ? "Through Tailscale: works wherever the phone is, phone to PC directly." : "Over your Wi-Fi: the phone must be on the same network.");
+  $("#dv-hint").classList.toggle("warn-text", !p.reachable);
+  const tick = () => {
+    const s = Math.max(0, Math.round((p.expiresAt - Date.now()) / 1000));
+    $("#dv-expire").textContent = s ? `Expires in ${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")} · works once` : "Expired. Make a new code.";
+    if (!s) clearInterval(pairTimer);
+  };
+  tick();
+  pairTimer = setInterval(tick, 1000);
+}
+$("#dv-pair").onclick = async () => { try { await newPairing(); $("#dv-dlg").showModal(); } catch (e) { toast(e.message, "bad"); } };
+$("#dv-new").onclick = () => newPairing().catch((e) => toast(e.message, "bad"));
+$("#dv-close").onclick = () => { clearInterval(pairTimer); $("#dv-dlg").close(); loadDevices(); };
+if (new URLSearchParams(location.search).get("paired")) { toast("This phone is paired. It has its own key; you can revoke it from Devices.", "ok"); history.replaceState(null, "", "/"); }
+
+// ---------------------------------------------------------------- Status bar: limits, keep awake, resources
+let statusTimer;
+const scheduleStatus = () => { clearTimeout(statusTimer); statusTimer = setTimeout(loadStatus, 1500); };
+async function loadStatus() {
+  try { S.status = await api("/api/status"); renderStatus(); } catch { /* offline: keep the last one */ }
+}
+const until = (ms) => { const m = Math.max(0, Math.round((ms - Date.now()) / 60000)); return m >= 1440 ? `${Math.floor(m / 1440)}d ${Math.round((m % 1440) / 60)}h` : m >= 60 ? `${Math.floor(m / 60)}h ${m % 60}m` : `${m}m`; };
+function renderStatus() {
+  const s = S.status;
+  if (!s) return;
+  const limits = s.limits.map((l) => {
+    const w = (l.windows || []).slice().sort((a, b) => b.usedPct - a.usedPct)[0];
+    if (l.limited) return `<span class="sb-it warn" title="${esc(l.agent)} hit a usage limit">${sig(l.agent)}<b>limit</b> · resets ${until(l.resetAt)}</span>`;
+    if (w) return `<span class="sb-it" title="${esc(l.agent)}: ${(l.windows || []).map((x) => `${x.label} ${Math.round(x.usedPct)}% used`).join(", ")}">${sig(l.agent)}<span class="sb-bar"><i style="width:${Math.min(100, w.usedPct)}%"></i></span><b>${Math.round(w.usedPct)}%</b> ${esc(w.label)}</span>`;
+    return "";
+  }).join("");
+  const awake = { on: "On", agent: "Agent", off: "Off" }[s.awake.mode];
+  $("#statusbar").innerHTML = `${limits}
+    <span class="sb-it"><span class="sd s-running">●</span><b>${s.running}</b> running</span>
+    <span class="sb-it"><span class="sd s-idle">◆</span><b>${s.waiting}</b> waiting</span>
+    <span class="sb-it" title="Today, at API prices (subscription use isn't billed)"><b>$${(s.spend.api + s.spend.subscriptionValue).toFixed(2)}</b> today</span>
+    <span class="grow"></span>
+    <span class="sb-pop"><button class="sb-it sb-btn" id="sb-awake" aria-haspopup="true" title="Keep computer awake">☕ ${awake}<i class="sb-dot ${s.awake.active ? "on" : ""}"></i></button>
+      <div class="sb-menu" id="sb-awake-menu" hidden><div class="sb-mh">Keep computer awake <span class="muted">${awake} · ${s.awake.active ? "holding sleep off" : "normal sleep"}</span></div>
+        ${[["on", "On", "Keep this computer awake all the time"], ["agent", "Agent", "Stay awake while an agent is working"], ["off", "Off", "Let the computer sleep as usual"]].map(([v, l, d]) => `<button class="sb-opt ${s.awake.mode === v ? "on" : ""}" data-mode="${v}"><i></i><span><b>${l}</b><span class="muted small">${d}</span></span></button>`).join("")}</div></span>
+    <span class="sb-pop"><button class="sb-it sb-btn" id="sb-res" aria-haspopup="true" title="Resource manager">▤ <b>${s.terminals}</b> terminal${s.terminals === 1 ? "" : "s"}</button><div class="sb-menu sb-res" id="sb-res-menu" hidden></div></span>`;
+}
+const fmtMB = (b) => (b >= 1e9 ? `${(b / 1e9).toFixed(2)} GB` : `${Math.round(b / 1e6)} MB`);
+async function loadResources() {
+  const box = $("#sb-res-menu");
+  box.innerHTML = `<div class="sb-mh">Resource manager <span class="muted">measuring…</span></div>`;
+  try {
+    const r = await api("/api/resources");
+    const spark = (h) => { if (h.length < 2) return ""; const max = Math.max(...h), min = Math.min(...h); return `<svg width="54" height="14" viewBox="0 0 54 14" aria-hidden="true"><path d="${h.map((v, i) => `${i ? "L" : "M"}${(i / (h.length - 1) * 54).toFixed(1)} ${(13 - ((v - min) / (max - min || 1)) * 12).toFixed(1)}`).join(" ")}" fill="none" stroke="var(--accent)" stroke-width="1.2"/></svg>`; };
+    box.innerHTML = `<div class="sb-mh">Resource manager <span class="muted">CPU ${r.totalCpuPct}% · ${fmtMB(r.totalMem)} · Netheron ${fmtMB(r.netheronMem)}</span></div>
+      <div class="sb-rows">${r.tasks.map((t) => `<div class="sb-row" data-id="${esc(t.id)}"><span class="sd s-${esc(t.status)}">${DOT[t.status] ?? "●"}</span><span class="grow">${esc(t.title)}<span class="muted small"> · ${esc(projName(t.repo))} · ${t.processes} proc · idle ${until(Date.now() + t.idleMs)}</span></span>${spark(t.history)}<span class="mono small">${t.cpuPct}%</span><span class="mono small">${fmtMB(t.memBytes)}</span></div>`).join("") || `<p class="muted small" style="padding:8px 12px">No terminals running.</p>`}</div>
+      <div class="sb-foot"><button id="sb-clean">Close terminals idle for 2 days</button></div>`;
+  } catch (e) { box.innerHTML = `<p class="muted small" style="padding:10px">${esc(e.message)}</p>`; }
+}
+$("#statusbar").onclick = async (e) => {
+  e.stopPropagation();
+  const btn = e.target.closest("#sb-awake, #sb-res");
+  if (btn) {
+    const menu = btn.nextElementSibling, open = menu.hidden;
+    $$(".sb-menu").forEach((m) => (m.hidden = true));
+    menu.hidden = !open;
+    if (open && btn.id === "sb-res") loadResources();
+    return;
+  }
+  const opt = e.target.closest(".sb-opt");
+  if (opt) { S.status.awake = await api("/api/awake", { body: { mode: opt.dataset.mode } }); renderStatus(); $("#sb-awake-menu").hidden = false; return; }
+  if (e.target.closest("#sb-clean")) { const r = await api("/api/resources/cleanup", { body: { hours: 48 } }); toast(r.stopped.length ? `Closed ${r.stopped.length} idle terminal${r.stopped.length === 1 ? "" : "s"}.` : "Nothing idle for 2 days.", "ok"); loadResources(); return; }
+  const row = e.target.closest(".sb-row");
+  if (row) { $$(".sb-menu").forEach((m) => (m.hidden = true)); goTask(row.dataset.id); }
+};
+document.addEventListener("click", () => $$(".sb-menu").forEach((m) => (m.hidden = true)));
+loadStatus();
+setInterval(loadStatus, 20_000);
+
+// Phone: bottom tab bar (Relay skin, narrow screens).
+$("#mtabs").onclick = (e) => {
+  const b = e.target.closest("button");
+  if (!b) return;
+  if (b.dataset.new !== undefined) return openNewTask();
+  showView(b.dataset.view);
+};
