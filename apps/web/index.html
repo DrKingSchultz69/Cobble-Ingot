@@ -17,6 +17,8 @@
   <script>
     // Apply the saved look before the first paint, so the page never flashes the wrong skin.
     try { const p = JSON.parse(localStorage.getItem("mm.prefs") || "{}"), h = document.documentElement;
+      // Relay arrived after Calm/Block: switch to it once; picking another skin later sticks.
+      if (!p.relay) { p.skin = "relay"; p.relay = 1; localStorage.setItem("mm.prefs", JSON.stringify(p)); }
       h.dataset.skin = p.skin || "relay"; if (p.theme) h.dataset.theme = p.theme; if (p.motion === "off") h.dataset.motion = "off"; if (p.embers === "off") h.dataset.embers = "off"; } catch {}
   </script>
 </head>
