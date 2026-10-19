@@ -3,7 +3,7 @@
 // stuck detection, pause-until-limit-reset, live meter, cost alarms and a receipt per task.
 import { EventEmitter } from "node:events";
 import { existsSync } from "node:fs";
-import { resolve } from "node:path";
+import { resolve, sep } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { buildContext, record, rulesPreamble } from "../../memory/src/context.ts";
 import { ensureGraphSchema, findNode, upsertNode } from "../../memory/src/graph.ts";
@@ -128,6 +128,8 @@ export type NewTask = {
   browser?: boolean;
   /** Resume a past Claude / Codex session (its id) in the folder it ran in, instead of starting fresh. */
   resume?: string;
+  /** Forecast explorer: also gets the forecast_* tools (needs the browser). */
+  forecast?: boolean;
 };
 
 export type QueuedMessage = { id: number; task: string; text: string; created: number; sent: number };
@@ -277,6 +279,11 @@ export class TaskManager extends EventEmitter {
     if (input.resume && !["claude", "codex"].includes(input.agent ?? "")) throw new Error("only Claude and Codex sessions can be resumed");
     if (!input.repo || !existsSync(input.repo)) throw new Error(`project folder not found: ${input.repo}`);
     let repo = resolve(input.repo);
+    // Forecast's test copy: tasks may only use the sample projects inside its own folder, never a real repo.
+    const sandbox = process.env.MM_FORECAST_SANDBOX;
+    if (sandbox && !(repo + sep).toLowerCase().startsWith(resolve(sandbox).toLowerCase() + sep)) {
+      throw new Error(`Forecast test copy: only projects inside ${resolve(sandbox)} can be used here.`);
+    }
     const git = await isGitRepo(repo);
     if (git) repo = await repoRoot(repo);
 
@@ -401,7 +408,7 @@ export class TaskManager extends EventEmitter {
     if (profile) this.db.prepare("UPDATE tasks SET profile = ? WHERE id = ?").run(profile.id, id);
     if (input.browser) this.db.prepare("UPDATE tasks SET browser = 1 WHERE id = ?").run(id);
 
-    const launched = this.launcher(agent, { taskId: id, project: repo, cwd, model: model || undefined, prompt: fullPrompt || undefined, lean: !!input.lean, browser: !!input.browser, env: profile?.env, resume: input.resume });
+    const launched = this.launcher(agent, { taskId: id, project: repo, cwd, model: model || undefined, prompt: fullPrompt || undefined, lean: !!input.lean, browser: !!input.browser, forecast: !!input.forecast && !!input.browser, env: profile?.env, resume: input.resume });
     const launch = profile ? { ...launched, env: { ...launched.env, ...profile.env } } : launched;
     if (launch.logs) this.logs.add({ task: id, agent: launch.logs.agent, home: launch.logs.home, cwd, since: now - 5_000 });
     if (from?.worktree && agent === "claude" && (this.home || !process.env.NODE_TEST_CONTEXT)) {

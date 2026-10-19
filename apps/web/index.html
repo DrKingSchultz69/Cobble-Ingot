@@ -36,6 +36,7 @@
       <button data-view="issues"><svg class="nav-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM12 8v5M12 16v.5"/></svg>Issues</button>
       <button data-view="automations"><svg class="nav-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 8v4l3 2M4 12a8 8 0 1 0 2.3-5.7M4 4v4h4"/></svg>Automations</button>
       <button data-view="sessions"><svg class="nav-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h10M4 18h7M17 15l3 3-3 3"/></svg>Sessions</button>
+      <button data-view="forecast"><svg class="nav-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 18a4 4 0 0 1-.6-8A6 6 0 0 1 18 9a4.5 4.5 0 0 1-.5 9zM9 21l1-2M13 21l1-2"/></svg>Forecast</button>
       <button data-view="workspace"><svg class="nav-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 17l6-6-6-6M12 19h8"/></svg>Workspace</button>
       <button data-view="research"><svg class="nav-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3h6M10 3v6l-5 9a2 2 0 0 0 2 3h10a2 2 0 0 0 2-3l-5-9V3"/></svg>Research</button>
       <button data-view="learn"><svg class="nav-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5a2 2 0 0 1 2-2h13v16H6a2 2 0 0 0-2 2zM4 21V5M8 7h7"/></svg>Learn</button>
@@ -143,6 +144,20 @@
         <input id="ss-q" placeholder="Search sessions" style="max-width:260px"><button id="ss-refresh" class="ghost" title="Rescan">↻</button></div>
       <p class="muted small">Claude Code and Codex sessions found in their own log folders on this PC. Resume one to carry on where it stopped.</p>
       <div id="ss-list"></div>
+    </main>
+  </section>
+
+  <!-- FORECAST: an agent uses every feature in a test copy of Netheron, then you review the report -->
+  <section class="view" id="view-forecast">
+    <main class="doc-main wide nx-page">
+      <div class="nx-head"><h2 class="grow">Forecast</h2>
+        <select id="fc-agent" title="Tester agent" style="max-width:150px"><option value="claude">Claude Code</option><option value="codex">Codex</option><option value="opencode">OpenCode</option></select>
+        <button class="primary" id="fc-run">Test Netheron</button></div>
+      <p class="muted small">A tester agent uses every feature in a separate test copy of Netheron: its own ports and empty data, and fake "echo" agents, so no real agent runs. Each issue comes with a screenshot and a suggested fix. Nothing is fixed until you review it. The tester agent itself uses your plan.</p>
+      <div id="fc-live"></div>
+      <div id="fc-report"></div>
+      <h3 class="nx-rail">Runs</h3>
+      <div id="fc-runs"></div>
     </main>
   </section>
 

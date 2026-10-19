@@ -12,7 +12,7 @@ import { indexProject, projectKey, renderTree } from "./indexer.ts";
 
 /** dir = project root (memory scope); workdir = the agent's own folder (worktree) where edits happen.
  *  browser = set only for tasks with the browser ticked: Netheron's address + token for the browser_* tools. */
-type Env = { project: string; dir: string; workdir?: string; taskId?: string; agent?: string; browser?: { api: string; token: string } };
+type Env = { project: string; dir: string; workdir?: string; taskId?: string; agent?: string; browser?: { api: string; token: string }; forecast?: boolean };
 
 const xy = { x: { type: "number", description: "pixels from the left of the last screenshot" }, y: { type: "number", description: "pixels from the top" } };
 /** Shared browser (opt-in per task). Each action returns a fresh screenshot; one action per turn. */
@@ -30,15 +30,36 @@ export const BROWSER_TOOLS = [
 ];
 export const BROWSER_TOOL_NAMES = BROWSER_TOOLS.map((t) => t.name);
 
-/** Browser tools are run by the Netheron server (it owns Chrome and the safety checks); this just forwards. */
+/** Forecast explorer only: what it checks and finds is saved into the run's step file and report. */
+export const FORECAST_TOOLS = [
+  { name: "forecast_feature", description: "Start testing one feature (e.g. \"New task\", \"Board\"). The steps after this are grouped under it in the report.", inputSchema: { type: "object", properties: { name: { type: "string" } }, required: ["name"] } },
+  { name: "forecast_expect", description: "Check that the page now shows this text (case doesn't matter). Saved as a check in the replayable script. Returns pass or fail.", inputSchema: { type: "object", properties: { text: { type: "string" } }, required: ["text"] } },
+  {
+    name: "forecast_issue",
+    description: "Report a problem you found (bug, error, confusing or slow screen). A screenshot of the current page is saved with it. Always include a concrete suggested fix.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        title: { type: "string" }, severity: { type: "string", enum: ["high", "medium", "low"] },
+        steps: { type: "string", description: "What you did" }, expected: { type: "string" }, actual: { type: "string" },
+        fix: { type: "string", description: "Suggested fix: which file / code and what to change" },
+      },
+      required: ["title", "severity", "actual", "fix"],
+    },
+  },
+];
+export const FORECAST_TOOL_NAMES = FORECAST_TOOLS.map((t) => t.name);
+
+/** Browser and Forecast tools are run by the Netheron server (it owns Chrome and the safety checks); this just forwards. */
 async function browserCall(env: Env, name: string, args: Record<string, unknown>) {
   const fail = (text: string) => ({ content: [{ type: "text", text }], isError: true });
   if (!env.browser || !env.taskId) return fail("This task doesn't have the browser. The user can tick 🌐 Browser when starting a task.");
-  const sub = name === "browser_ask_user" ? "/ask" : name === "browser_finish" ? "/finish" : "";
-  const body = sub ? args : { ...args, action: name.slice("browser_".length) };
+  const forecast = name.startsWith("forecast_");
+  const sub = forecast ? `/forecast/${name.slice("forecast_".length)}` : name === "browser_ask_user" ? "/browser/ask" : name === "browser_finish" ? "/browser/finish" : "/browser";
+  const body = forecast || sub !== "/browser" ? args : { ...args, action: name.slice("browser_".length) };
   let r: Response;
   try {
-    r = await fetch(`${env.browser.api}/api/tasks/${encodeURIComponent(env.taskId)}/browser${sub}`, {
+    r = await fetch(`${env.browser.api}/api/tasks/${encodeURIComponent(env.taskId)}${sub}`, {
       method: "POST", headers: { authorization: `Bearer ${env.browser.token}`, "content-type": "application/json" }, body: JSON.stringify(body),
     });
   } catch {
@@ -201,10 +222,10 @@ export function handle(db: DatabaseSync, env: Env, msg: { id?: unknown; method: 
     case "ping":
       return {};
     case "tools/list":
-      return { tools: env.browser ? [...TOOLS, ...BROWSER_TOOLS] : TOOLS };
+      return { tools: [...TOOLS, ...(env.browser ? BROWSER_TOOLS : []), ...(env.browser && env.forecast ? FORECAST_TOOLS : [])] };
     case "tools/call": {
       const p = msg.params ?? {};
-      if (String(p.name).startsWith("browser_")) return browserCall(env, String(p.name), (p.arguments as Record<string, unknown>) ?? {});
+      if (String(p.name).startsWith("browser_") || (env.forecast && String(p.name).startsWith("forecast_"))) return browserCall(env, String(p.name), (p.arguments as Record<string, unknown>) ?? {});
       if (p.name === "mm_diagnostics") { // runs a process: answered asynchronously
         const args = (p.arguments as Record<string, unknown>) ?? {};
         return runDiagnostics(env.workdir ?? env.dir, args.command ? String(args.command) : undefined)
@@ -227,6 +248,7 @@ export function runMcp(): void {
   const dir = process.env.MM_PROJECT ?? process.cwd();
   const env: Env = { dir, project: projectKey(dir), workdir: process.env.MM_WORKDIR ?? process.cwd(), taskId: process.env.MM_TASK_ID, agent: process.env.MM_AGENT };
   if (process.env.MM_BROWSER === "1" && process.env.MM_API) env.browser = { api: process.env.MM_API, token: loadToken() };
+  if (process.env.MM_FORECAST === "1") env.forecast = true;
   const db = openDb();
   ensureGraphSchema(db);
   if (!findNode(db, "project", env.project)) {

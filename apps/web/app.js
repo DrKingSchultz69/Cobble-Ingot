@@ -2172,12 +2172,14 @@ function feature(v) {
   if (v === "issues") loadIssues();
   if (v === "automations") loadAutomations();
   if (v === "sessions") loadSessions();
+  if (v === "forecast") loadForecast();
   if (v === "devices") loadDevices();
 }
 function onFeatureMessage(m) {
   if (m.t === "task" || m.t === "removed") { if ($("#view-board").classList.contains("active")) renderKanban(); scheduleStatus(); }
   if (m.t === "schedule" && $("#view-automations").classList.contains("active")) loadAutomations();
   if (m.t === "devices" && $("#view-devices").classList.contains("active")) loadDevices();
+  if (m.t === "forecast" && $("#view-forecast").classList.contains("active")) { clearTimeout(S.fcTimer); S.fcTimer = setTimeout(loadForecast, 700); }
   if (m.t === "awake" && S.status) { S.status.awake = m.awake; renderStatus(); }
 }
 $$("[data-go-new]").forEach((b) => (b.onclick = () => openNewTask()));
@@ -2353,6 +2355,85 @@ $("#ss-list").onclick = (e) => {
   if (!b) return;
   const s = S.pastSessions[+b.dataset.i];
   busy(b, async () => { const t = await api("/api/sessions/resume", { body: s }); S.tasks.set(t.id, t); goTask(t.id); });
+};
+
+// ---------------------------------------------------------------- Forecast: an agent uses every feature in a test copy
+const FC_ENDED = ["done", "failed", "stopped"];
+const FC_SEV = { high: "var(--bad)", medium: "var(--warn)", low: "var(--muted)" };
+const fcTime = (ms) => (ms < 1000 ? `${ms} ms` : ms < 120_000 ? `${(ms / 1000).toFixed(1)} s` : `${Math.round(ms / 60_000)} min`);
+const fcIssues = (st) => st.issues.high + st.issues.medium + st.issues.low;
+async function loadForecast() {
+  try {
+    const { runs } = await api("/api/forecast/runs");
+    const live = runs.find((r) => !FC_ENDED.includes(r.status));
+    $("#fc-run").disabled = !!live;
+    $("#fc-live").innerHTML = live ? `<div class="nx-list"><div class="nx-row">
+      <span class="tag" style="color:var(--accent);border-color:var(--accent)">${live.kind === "replay" ? "Replaying" : "Testing"} · ${esc(live.status)}</span>
+      <span class="grow muted small">${live.stats.steps} steps · ${live.stats.checks.passed} checks passed · ${fcIssues(live.stats)} issues so far</span>
+      ${live.taskId ? `<button class="ghost" data-fc-watch="${esc(live.taskId)}">Watch</button>` : ""}<button data-fc-stop="${esc(live.id)}">Stop</button></div></div>` : "";
+    $("#fc-runs").innerHTML = runs.length ? `<div class="nx-list">${runs.map((r) => `<div class="nx-row${r.id === S.fcOpen ? "" : " dim"}" data-fc-open="${esc(r.id)}" style="cursor:pointer">
+      <span class="tag">${r.kind === "replay" ? "Replay" : "Explore"}</span>
+      <span class="grow"><b>${new Date(r.created).toLocaleString()}</b><div class="muted small mono">${esc(r.status)} · ${r.stats.steps} steps · ${r.stats.checks.passed}/${r.stats.checks.passed + r.stats.checks.failed} checks · ${fcIssues(r.stats)} issues · ${fcTime(r.stats.ms)}</div></span>
+      ${r.stats.issues.high ? `<span class="tag" style="color:var(--bad);border-color:var(--bad)">${r.stats.issues.high} high</span>` : ""}</div>`).join("")}</div>`
+      : `<p class="muted">No runs yet. Press Test Netheron to start the first one.</p>`;
+    const id = runs.some((r) => r.id === S.fcOpen) ? S.fcOpen : runs[0]?.id;
+    if (id) await showForecastRun(id); else $("#fc-report").innerHTML = "";
+  } catch (e) { $("#fc-runs").innerHTML = `<p class="muted">${esc(e.message)}</p>`; }
+}
+async function showForecastRun(id) {
+  S.fcOpen = id;
+  const r = await api(`/api/forecast/runs/${encodeURIComponent(id)}`);
+  const st = r.stats;
+  const tile = (label, value, sub = "", color = "") => `<div style="flex:1 1 140px;border:1px solid var(--line);border-radius:var(--radius);padding:12px 14px;background:var(--panel)">
+    <div class="nx-rail" style="margin:0">${label}</div><div style="font:600 26px/1.2 var(--mono);${color ? `color:${color}` : ""}">${value}</div><div class="muted small">${sub}</div></div>`;
+  const maxSteps = Math.max(1, ...st.features.map((f) => f.steps));
+  const issues = [...r.issues].sort((a, b) => ["high", "medium", "low"].indexOf(a.severity) - ["high", "medium", "low"].indexOf(b.severity));
+  const part = (k, v) => (v ? `<div class="small"><b>${k}:</b> ${esc(v)}</div>` : "");
+  const ended = FC_ENDED.includes(r.status);
+  $("#fc-report").innerHTML = `
+    <div class="nx-head"><h3 class="grow" style="margin:0">${r.kind === "replay" ? "Replay" : "Explore"} · ${new Date(r.created).toLocaleString()}</h3>
+      ${ended && r.script ? `<button class="primary" data-fc-replay="${esc(r.id)}" ${$("#fc-run").disabled ? "disabled" : ""}>Replay steps</button>` : ""}</div>
+    ${r.error ? `<p class="warn-text small">${esc(r.error)}</p>` : ""}${r.summary ? `<p class="small">${esc(r.summary)}</p>` : ""}
+    <div style="display:flex;flex-wrap:wrap;gap:10px">
+      ${tile("Steps", st.steps, st.failed ? `${st.failed} failed` : "all ran", st.failed ? "var(--warn)" : "")}
+      ${tile("Checks", `${st.checks.passed}/${st.checks.passed + st.checks.failed}`, "passed", st.checks.failed ? "var(--warn)" : "var(--ok)")}
+      ${tile("Issues", fcIssues(st), `${st.issues.high} high · ${st.issues.medium} medium · ${st.issues.low} low`, st.issues.high ? "var(--bad)" : "")}
+      ${tile("Page errors", st.problems, "JS errors and failed requests")}
+      ${tile("Time", fcTime(st.ms), r.status)}
+    </div>
+    ${st.features.length ? `<h3 class="nx-rail">Features</h3><div class="nx-list">${st.features.map((f) => `<div class="nx-row" style="flex-wrap:wrap;row-gap:6px">
+      <span style="flex:0 0 150px" class="small"><b>${esc(f.name)}</b></span>
+      <span class="grow" style="flex:1 1 160px;display:flex;height:10px;border-radius:5px;overflow:hidden;background:var(--panel-2)" title="${f.steps} steps, ${f.failed} failed">
+        <i style="width:${((f.steps - f.failed) / maxSteps) * 100}%;background:var(--ok)"></i><i style="width:${(f.failed / maxSteps) * 100}%;background:var(--bad)"></i></span>
+      <span class="muted small mono" style="flex:none;text-align:right">${f.steps} step${f.steps === 1 ? "" : "s"} · ${fcTime(f.ms)}${f.issues ? ` · <span style="color:var(--warn)">${f.issues} issue${f.issues > 1 ? "s" : ""}</span>` : ""}</span></div>`).join("")}</div>` : ""}
+    <h3 class="nx-rail">Issues to review</h3>
+    ${issues.length ? `<div class="nx-list">${issues.map((i) => `<div class="nx-row" style="align-items:flex-start;flex-wrap:wrap">
+      <span class="tag" style="color:${FC_SEV[i.severity]};border-color:${FC_SEV[i.severity]}">${i.severity}</span>
+      <span class="grow" style="flex:1 1 260px"><b>${esc(i.title)}</b><div class="muted small mono">${esc(i.feature)}${i.url ? ` · ${esc(i.url)}` : ""}${i.source === "page" ? " · found by Netheron" : ""}</div>
+        ${part("What it did", i.steps)}${part("Expected", i.expected)}${part("What happened", i.actual)}${part("Suggested fix", i.fix)}</span>
+      ${i.shot ? `<a href="/api/forecast/runs/${esc(r.id)}/shot/${esc(i.shot)}" target="_blank" rel="noopener"><img src="/api/forecast/runs/${esc(r.id)}/shot/${esc(i.shot)}" alt="Screenshot of the issue" loading="lazy" style="width:180px;max-width:100%;border:1px solid var(--line);border-radius:8px"></a>` : ""}</div>`).join("")}</div>`
+      : `<p class="muted small">${ended ? "No issues found." : "None yet."}</p>`}
+    ${r.blocked.length ? `<h3 class="nx-rail">Not tested (blocked by safety rules)</h3><ul class="small muted">${r.blocked.map((b) => `<li>${esc(b)}</li>`).join("")}</ul>` : ""}
+    ${st.slowest.length ? `<h3 class="nx-rail">Slowest steps</h3><div class="nx-list">${st.slowest.map((x) => `<div class="nx-row"><span class="grow small">${esc(x.label)}</span><span class="mono small">${fcTime(x.ms)}</span></div>`).join("")}</div>` : ""}
+    <details><summary class="nx-rail" style="cursor:pointer">All steps (${r.results.length})</summary><div class="nx-table"><table>
+      <tr><th>#</th><th>Feature</th><th>Step</th><th>Result</th><th>Time</th></tr>
+      ${r.results.map((x, k) => `<tr><td class="mono">${k + 1}</td><td class="small">${esc(x.feature)}</td><td class="small">${esc(r.labels[k])}</td>
+        <td class="small" style="color:${x.ok ? "var(--ok)" : "var(--bad)"}">${x.ok ? "ok" : esc(x.error || "failed")}${x.problems.length ? ` <span class="warn-text">· ${x.problems.length} page error${x.problems.length > 1 ? "s" : ""}</span>` : ""}</td><td class="mono small">${fcTime(x.ms)}</td></tr>`).join("")}
+    </table></div></details>
+    ${r.script ? `<p class="muted small">Step file: <span class="mono">${esc(r.script)}</span> (plain JSON you can read and edit; Replay uses it)</p>` : ""}`;
+}
+$("#fc-run").onclick = () => busy($("#fc-run"), async () => {
+  const r = await api("/api/forecast/explore", { body: { agent: $("#fc-agent").value } });
+  S.fcOpen = r.id;
+  if (r.status === "failed") toast(r.error || "Forecast couldn't start", "bad");
+}).then(loadForecast); // after busy() re-enables the button: a live run disables it again
+$("#view-forecast").onclick = (e) => {
+  const el = e.target.closest("[data-fc-open],[data-fc-stop],[data-fc-watch],[data-fc-replay]");
+  if (!el) return;
+  if (el.dataset.fcWatch) return goTask(el.dataset.fcWatch);
+  if (el.dataset.fcOpen) { S.fcOpen = el.dataset.fcOpen; return loadForecast(); }
+  if (el.dataset.fcStop) return busy(el, async () => { await api(`/api/forecast/runs/${encodeURIComponent(el.dataset.fcStop)}/stop`, { body: {} }); await loadForecast(); });
+  if (el.dataset.fcReplay) return busy(el, async () => { const r = await api(`/api/forecast/runs/${encodeURIComponent(el.dataset.fcReplay)}/replay`, { body: {} }); S.fcOpen = r.id; await loadForecast(); });
 };
 
 // ---------------------------------------------------------------- Devices: pair a phone with a QR code, revoke

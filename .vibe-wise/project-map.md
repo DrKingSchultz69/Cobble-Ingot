@@ -56,5 +56,10 @@ TaskManager --events--> server --WS--> Browser
 - Learner's choices: peer-to-peer VPN (Tailscale/WireGuard) instead of a relay; new phone joins by scanning a QR code; a lost phone's access is revoked.
 - Confirmed details: one-time 5-min QR code with the Tailscale address; per-phone key; Settings → Devices with Revoke (PC or any paired phone); revoke closes live connections; agents keep running, the phone's last-minute actions flagged in Needs you; keep Tailscale key expiry; optional app lock; retire the shared ?token= link.
 
+## Forecast (first slice built 2026-10-18)
+- `packages/daemon/src/forecast.ts`: runs (DATA_DIR/forecast/<id>/run.json + issue screenshots), test copy starter, explorer prompt, step recording, replay, analytics. Routes in server.ts (`/api/forecast/*`, `/api/tasks/:id/forecast/*`). UI: Forecast view in apps/web.
+- Test copy = second Netheron (ports 5141-5143, MM_FORECAST_PORT to move) with echo agents, empty data, own home, no credentials, tasks only in its sample project. Step files: `<project>/.netheron/forecast/<run>.json`.
+- Later slices (designed, not built): stress/scalability, security, vulnerability tests; imported projects; fix after review.
+
 ## Unknowns
 - Which remaining Solutions.md options to build next, and in what order.

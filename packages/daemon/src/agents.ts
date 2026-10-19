@@ -3,7 +3,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { BROWSER_TOOL_NAMES } from "../../memory/src/mcp.ts";
+import { BROWSER_TOOL_NAMES, FORECAST_TOOL_NAMES } from "../../memory/src/mcp.ts";
 import { DATA_DIR, HOST, PORT, UI_PORT } from "./config.ts";
 import type { LogAgent } from "./sessionlogs.ts";
 
@@ -40,6 +40,8 @@ export type LaunchOpts = {
   env?: Record<string, string>;
   /** Claude / Codex: resume this past session instead of starting a new one. */
   resume?: string;
+  /** Forecast explorer: the MCP server also offers forecast_* tools (checks, issues, features). */
+  forecast?: boolean;
 };
 
 export type AuthMode = "key" | "sub";
@@ -58,6 +60,7 @@ export function authMode(agent: "claude" | "codex", env: Record<string, string |
 const base = (tag: string, provider: string) => `http://${HOST}:${PORT}/a/${tag}/${provider}`;
 const fwd = (p: string) => p.replace(/\\/g, "/");
 const MCP_BIN = fwd(fileURLToPath(new URL("../../memory/bin/mcp.ts", import.meta.url)));
+const ECHO_BIN = fwd(fileURLToPath(new URL("../bin/echo-agent.ts", import.meta.url)));
 const NODE = fwd(process.execPath);
 
 function mcpEnv(agent: string, o: LaunchOpts): Record<string, string> {
@@ -66,12 +69,18 @@ function mcpEnv(agent: string, o: LaunchOpts): Record<string, string> {
   if (o.taskId) env.MM_TASK_ID = o.taskId;
   if (o.cwd) env.MM_WORKDIR = fwd(o.cwd);
   if (o.browser) Object.assign(env, { MM_BROWSER: "1", MM_API: `http://${HOST}:${UI_PORT}` });
+  if (o.forecast) env.MM_FORECAST = "1";
   return env;
 }
 
 // How each CLI is pointed at the proxy (API keys only) and the shared memory. The proxy tag is the agent name
 // (plus task id when there is one) so usage can be split per agent and per task.
 export function launchFor(agent: string, userArgs: string[], o: LaunchOpts = {}): Launch {
+  // Forecast's test copy: every agent (shell too) is the echo agent, so nothing real runs.
+  if (process.env.MM_FAKE_AGENTS === "echo") {
+    if (!(AGENTS as readonly string[]).includes(agent)) throw new Error(`unknown agent "${agent}". Use: ${AGENTS.join(" | ")}`);
+    return { cmd: NODE, args: [ECHO_BIN, ...(o.prompt ? [o.prompt] : [])], env: {} };
+  }
   const tag = o.taskId ? `${agent}~${o.taskId}` : agent;
   const memory = o.memory !== false && agent !== "shell";
   const menv = mcpEnv(agent, o);
@@ -88,7 +97,7 @@ export function launchFor(agent: string, userArgs: string[], o: LaunchOpts = {})
         const settings = join(dir, `${o.taskId ?? "claude"}.settings.json`);
         // Browser tools (opt-in tasks only) are pre-approved too: the user ticked 🌐 and Netheron's hard blocks run in code.
         const safeTools = ["mm_get_context", "mm_search", "mm_record", "mm_tree", "mm_node", "mm_index", "mm_read_lines", "mm_diagnostics",
-          ...(o.browser ? BROWSER_TOOL_NAMES : [])].map((t) => `mcp__mm__${t}`);
+          ...(o.browser ? BROWSER_TOOL_NAMES : []), ...(o.forecast ? FORECAST_TOOL_NAMES : [])].map((t) => `mcp__mm__${t}`);
         writeFileSync(settings, JSON.stringify({ permissions: { allow: safeTools } }));
         args.push("--mcp-config", fwd(file), "--settings", fwd(settings));
         if (o.lean) args.push("--strict-mcp-config");

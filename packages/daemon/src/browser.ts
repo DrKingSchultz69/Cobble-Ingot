@@ -53,10 +53,29 @@ export function findChrome(): string {
   return candidates.find((c) => existsSync(c)) ?? "";
 }
 
+/** What an element is, so a saved step can find it again by its text after the layout moves (Forecast). */
+export type Target = { tag: string; text: string; id?: string; name?: string; placeholder?: string; nth: number };
+/** A JavaScript error or a failed request on the page (Forecast reports them). */
+export type PageProblem = { kind: "js" | "http"; message: string; url: string; ts: number };
+
+// Runs in the page: the actionable element at a point, or the elements matching a saved Target.
+const PAGE_HELPERS = `
+  const ACT = 'button, a, [role=button], [role=tab], input, textarea, select, summary, label';
+  // A field's own text is its label, never what was typed into it (that changes).
+  const field = (n) => n.matches('textarea, select, input:not([type=submit]):not([type=button])');
+  const own = (n) => String((field(n) ? n.getAttribute('aria-label') || n.title : n.innerText || n.value || n.getAttribute('aria-label') || n.title) || '').trim().replace(/\\s+/g, ' ').slice(0, 120);
+  const visible = (n) => { const r = n.getBoundingClientRect(); const s = getComputedStyle(n); return r.width > 0 && r.height > 0 && s.visibility !== 'hidden' && s.display !== 'none'; };
+  const same = (n, t) => n.tagName.toLowerCase() === t.tag && (t.id ? n.id === t.id : true)
+    && (t.name ? n.getAttribute('name') === t.name : true) && (t.placeholder ? n.getAttribute('placeholder') === t.placeholder : true)
+    && (t.text ? own(n) === t.text : true);
+  const matches = (t) => [...document.querySelectorAll(t.tag)].filter((n) => visible(n) && same(n, t));`;
+
 type Pending = { resolve: (v: any) => void; reject: (e: Error) => void };
 type Tab = {
   targetId: string; session: string; control: Control; busy: Promise<unknown>; url: string;
   casting: boolean; lastFrame?: Frame; sentAt: number; frameTimer?: NodeJS.Timeout;
+  /** Forecast: JS errors and failed requests since the last takeProblems(). Only collected once tracking is on. */
+  problems?: PageProblem[];
 };
 const FRAME_MS = 100; // live view: at most ~10 frames a second (Chrome waits for our ack before the next one)
 
@@ -141,6 +160,16 @@ export class SharedBrowser {
       if (wait <= 0) emit();
       else t.frameTimer ??= setTimeout(emit, wait);
       setTimeout(ack, FRAME_MS);
+    } else if (m.method === "Runtime.exceptionThrown" || m.method === "Runtime.consoleAPICalled" || m.method === "Network.responseReceived" || m.method === "Network.loadingFailed") {
+      const t = [...this.tabs.values()].find((x) => x.session === m.sessionId);
+      if (!t?.problems) return;
+      const p = m.params;
+      let problem: PageProblem | null = null;
+      if (m.method === "Runtime.exceptionThrown") problem = { kind: "js", message: String(p.exceptionDetails?.exception?.description ?? p.exceptionDetails?.text ?? "error").split("\n")[0], url: t.url, ts: Date.now() };
+      else if (m.method === "Runtime.consoleAPICalled" && p.type === "error") problem = { kind: "js", message: (p.args ?? []).map((a: any) => a.value ?? a.description ?? "").join(" ").slice(0, 300), url: t.url, ts: Date.now() };
+      else if (m.method === "Network.responseReceived" && p.response?.status >= 400) problem = { kind: "http", message: `${p.response.status} ${p.response.url}`, url: t.url, ts: Date.now() };
+      else if (m.method === "Network.loadingFailed" && !p.canceled) problem = { kind: "http", message: `failed: ${p.errorText}`, url: t.url, ts: Date.now() };
+      if (problem && t.problems.length < 200) t.problems.push(problem);
     } else if (m.method === "Page.frameNavigated" && !m.params.frame.parentId) {
       for (const t of this.tabs.values()) if (t.session === m.sessionId) t.url = m.params.frame.url;
     } else if (m.method === "Target.detachedFromTarget") {
@@ -257,6 +286,56 @@ export class SharedBrowser {
   private async evaluate<T>(t: Tab, expression: string): Promise<T> {
     const r = await this.send("Runtime.evaluate", { expression, returnByValue: true }, t.session);
     return r.result?.value as T;
+  }
+
+  /** Forecast: start collecting JS errors and failed requests for this window. */
+  async trackProblems(taskId: string) {
+    const t = await this.tab(taskId);
+    if (t.problems) return;
+    t.problems = [];
+    await this.send("Network.enable", {}, t.session);
+  }
+
+  takeProblems(taskId: string): PageProblem[] {
+    const t = this.tabs.get(taskId);
+    if (!t?.problems) return [];
+    return t.problems.splice(0);
+  }
+
+  /** The actionable element at x,y, described so it can be found again later (null on a blank spot). */
+  async describe(taskId: string, x: number, y: number): Promise<Target | null> {
+    const t = await this.tab(taskId);
+    return this.evaluate<Target | null>(t, `(() => {${PAGE_HELPERS}
+      const at = document.elementFromPoint(${Number(x)}, ${Number(y)});
+      const n = at && at.closest(ACT);
+      if (!n) return null;
+      const t = { tag: n.tagName.toLowerCase(), text: own(n), nth: 0 };
+      if (n.id) t.id = n.id;
+      if (n.getAttribute('name')) t.name = n.getAttribute('name');
+      if (n.getAttribute('placeholder')) t.placeholder = n.getAttribute('placeholder');
+      t.nth = Math.max(0, matches(t).indexOf(n));
+      return t;
+    })()`);
+  }
+
+  /** Where a saved Target is now (its centre), or null if it isn't on the page. Scrolls it into view first. */
+  async locate(taskId: string, target: Target): Promise<{ x: number; y: number } | null> {
+    const t = await this.tab(taskId);
+    return this.evaluate<{ x: number; y: number } | null>(t, `(() => {${PAGE_HELPERS}
+      const t = ${JSON.stringify(target)};
+      const all = matches(t);
+      const n = all[t.nth] || (all.length === 1 ? all[0] : null);
+      if (!n) return null;
+      n.scrollIntoView({ block: 'center', inline: 'center' });
+      const r = n.getBoundingClientRect();
+      return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) };
+    })()`);
+  }
+
+  /** Does the page show this text right now? */
+  async hasText(taskId: string, text: string): Promise<boolean> {
+    const t = await this.tab(taskId);
+    return this.evaluate<boolean>(t, `document.body ? document.body.innerText.toLowerCase().includes(${JSON.stringify(String(text).toLowerCase())}) : false`);
   }
 
   async screenshot(taskId: string): Promise<Shot> {

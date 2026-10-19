@@ -14,6 +14,7 @@ import { CATALOG, detectAvailability } from "../../router/src/router.ts";
 import { cookies, isAuthorized, requestToken, sameOrigin, tokenCookie } from "./auth.ts";
 import { createPairing, deviceForToken, ensureDeviceSchema, listDevices, networkAccess, reachableAddresses, redeemPairing, renameDevice, revokeDevice, setNetworkAccess } from "./devices.ts";
 import { BrowserBlocked, SharedBrowser, type BrowserAction, type UserInput } from "./browser.ts";
+import { analyse, Forecast, stepLabel, type StartCopy } from "./forecast.ts";
 import { PORT } from "./config.ts";
 import { usageSummary } from "./db.ts";
 import { httpError, json, Router } from "./http.ts";
@@ -46,7 +47,7 @@ const VENDOR: Record<string, string> = {
 };
 const MIME: Record<string, string> = {
   ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8",
-  ".json": "application/json", ".svg": "image/svg+xml", ".ttf": "font/ttf", ".woff2": "font/woff2", ".png": "image/png", ".webmanifest": "application/manifest+json",
+  ".json": "application/json", ".svg": "image/svg+xml", ".ttf": "font/ttf", ".woff2": "font/woff2", ".png": "image/png", ".jpg": "image/jpeg", ".webmanifest": "application/manifest+json",
 };
 
 export type ServerOpts = {
@@ -62,9 +63,13 @@ export type ServerOpts = {
   awake?: KeepAwake;
   /** Resource monitor (tests pass one with a fake process table). */
   resources?: ResourceMonitor;
+  /** Forecast's test-copy starter (tests pass a fake one). */
+  forecastCopy?: StartCopy;
+  /** Project Forecast tests and saves step files into (default: this Netheron checkout). */
+  forecastRoot?: string;
 };
 
-export function createWorkspaceServer(o: ServerOpts): { server: Server; tasks: TaskManager; broadcast: (m: unknown) => void } {
+export function createWorkspaceServer(o: ServerOpts): { server: Server; tasks: TaskManager; broadcast: (m: unknown) => void; forecast: Forecast } {
   const { db, token } = o;
   ensureGraphSchema(db);
   ensurePushSchema(db);
@@ -482,7 +487,7 @@ export function createWorkspaceServer(o: ServerOpts): { server: Server; tasks: T
         if (browser().control(params.id) === "user") throw new BrowserBlocked("The user has control of the browser right now. Wait: you'll get a message when they hand it back.");
         return await browser().screenshot(params.id);
       }
-      return await browser().act(params.id, body as BrowserAction);
+      return await forecast.record(params.id, body as BrowserAction, () => browser().act(params.id, body as BrowserAction));
     } catch (e) { throw blocked(e); }
   });
   api.post("/api/tasks/:id/browser/ask", async ({ params, body }) => {
@@ -508,10 +513,49 @@ export function createWorkspaceServer(o: ServerOpts): { server: Server; tasks: T
     try { await browser().show(params.id); } catch (e) { throw blocked(e); }
     return { ok: true };
   });
-  api.post("/api/tasks/:id/browser/finish", ({ params, body }) => {
+  api.post("/api/tasks/:id/browser/finish", async ({ params, body }) => {
     browserTask(params.id);
     tasks.browserFinished(params.id, String(body.summary ?? ""));
+    if (forecast.byTask(params.id)) {
+      await forecast.finished(params.id, String(body.summary ?? ""));
+      return { message: "Forecast run saved: the report and the replayable step file are ready for the user to review. Stop here." };
+    }
     return { message: "Noted. The window stays open so the user can look; it closes when they remove the task." };
+  });
+
+  // --- Forecast: use every feature in a test copy, report, replay ------------------------------------------
+  const forecast = new Forecast({ tasks, browser, broadcast, startCopy: o.forecastCopy, root: o.forecastRoot });
+  const fcTask = (id: string) => {
+    browserTask(id);
+    if (!forecast.byTask(id)) throw httpError(403, "This task isn't a running Forecast test.");
+    return id;
+  };
+  api.post("/api/tasks/:id/forecast/feature", ({ params, body }) => ({ message: forecast.feature(fcTask(params.id), String(body.name ?? "")) }));
+  api.post("/api/tasks/:id/forecast/expect", async ({ params, body }) => {
+    try { return { message: await forecast.expect(fcTask(params.id), String(body.text ?? "")) }; } catch (e) { throw blocked(e); }
+  });
+  api.post("/api/tasks/:id/forecast/issue", async ({ params, body }) => ({ message: await forecast.issue(fcTask(params.id), body ?? {}) }));
+  const runView = (r: NonNullable<ReturnType<Forecast["get"]>>) => ({ ...r, stats: analyse(r), labels: r.results.map((x) => stepLabel(x.step)) });
+  api.get("/api/forecast/runs", () => ({ runs: forecast.list().map((r) => ({ id: r.id, kind: r.kind, status: r.status, created: r.created, ended: r.ended, from: r.from, taskId: r.taskId, agent: r.agent, error: r.error, stats: analyse(r) })) }));
+  api.get("/api/forecast/runs/:rid", ({ params }) => {
+    const r = forecast.get(params.rid);
+    if (!r) throw httpError(404, "no such run");
+    return runView(r);
+  });
+  api.get("/api/forecast/runs/:rid/shot/:name", ({ params, res }) => {
+    const f = forecast.shotPath(params.rid, params.name);
+    if (!f) throw httpError(404, "no such screenshot");
+    serveFile(res, f);
+  });
+  api.post("/api/forecast/explore", async ({ body }) => {
+    try { return await forecast.explore({ agent: body.agent ? String(body.agent) : undefined, model: body.model ? String(body.model) : undefined, budgetMin: Number(body.budgetMin) || undefined }); }
+    catch (e) { throw httpError(400, (e as Error).message); }
+  });
+  api.post("/api/forecast/runs/:rid/replay", async ({ params }) => {
+    try { return await forecast.replay(params.rid); } catch (e) { throw httpError(400, (e as Error).message); }
+  });
+  api.post("/api/forecast/runs/:rid/stop", async ({ params }) => {
+    try { await forecast.stop(params.rid); return { ok: true }; } catch (e) { throw httpError(400, (e as Error).message); }
   });
 
   // --- memory --------------------------------------------------------------
@@ -687,8 +731,8 @@ export function createWorkspaceServer(o: ServerOpts): { server: Server; tasks: T
     });
   });
 
-  server.on("close", () => awake.dispose()); // give sleep back when Netheron stops
-  return { server, tasks, broadcast };
+  server.on("close", () => { awake.dispose(); void forecast.dispose(); }); // give sleep back, stop any test copy
+  return { server, tasks, broadcast, forecast };
 }
 
 // The browser always loads the newest UI files, but server code only changes on restart.
