@@ -10,11 +10,11 @@ Netheron is a local control room for AI coding agents. It lets one person run Cl
 - It runs **entirely on this machine**. There is no Netheron cloud.
 - The command is still called `mm` (the old project name was "multimodel-management").
 
-## What it does (24 features)
+## What it does (25 features)
 
 | Area | Features |
 |---|---|
-| Run the agents | Tasks (one real terminal per agent) · many agents · a git worktree per task · code view (files, diffs, editor, terminal) · hand-off and queue · pipelines and races |
+| Run the agents | Tasks (one real terminal per agent) · many agents · a git worktree per task · code view (files, diffs, editor, terminal) · **+ terminals** (cmd, PowerShell or an agent CLI in a task's folder; can become a task) · hand-off and queue · pipelines and races |
 | Choose and keep safe | Smart routing (picks agent + model per prompt) · evals · safety net (edit guard, checkpoints, alarms, verify) · shared browser (agents drive Chrome, the owner can take over) · automations (hourly/daily/weekdays/weekly) · Forecast (an agent uses every feature in a safe test copy and saves replayable steps) |
 | Watch | Usage (tokens, cost, plan limits) · alarms · resources (CPU/memory per agent) · keep awake · board (kanban) · issues (GitHub, Linear → tasks) |
 | Remember and connect | Shared memory (one knowledge graph for every vendor's agents, over MCP) · research (web and paper search) · learn (ingest the owner's documents) · sessions (find and resume past Claude/Codex chats) · phone (QR pairing, push alerts, revoke) · workers and profiles (other PCs, several accounts) |
@@ -63,6 +63,7 @@ npm run serve          # same as: node packages/daemon/src/cli.ts serve
 | `packages/daemon/src/server.ts` | Workspace server: REST, WebSocket, token auth |
 | `packages/daemon/src/tasks.ts` | TaskManager: tasks, worktrees, queue, schedules, pipelines, races |
 | `packages/daemon/src/agents.ts` | How each agent CLI is launched |
+| `packages/daemon/src/terminals.ts` | Plain "+" terminals (not tasks) |
 | `packages/daemon/src/proxy.ts`, `sessionlogs.ts` | Usage: proxy for API keys; subscription usage read from each CLI's own logs |
 | `packages/daemon/src/browser.ts` | Shared Chrome over CDP |
 | `packages/daemon/src/forecast.ts` | Forecast runs, test copy, replay, analytics |
@@ -89,7 +90,7 @@ npm run serve          # same as: node packages/daemon/src/cli.ts serve
 2. **Protect the token.** Don't print it in logs you share, put it in URLs sent to third parties, or commit it. `node packages/daemon/src/cli.ts token` shows it to the owner when needed.
 3. **Never sign in for the owner.** Agent logins (Claude Pro/Max, ChatGPT plan, API keys) belong to the owner. Subscription traffic must stay inside each vendor's official app; don't route it through a proxy.
 4. **Don't touch `~/.mm` by hand** while Netheron is running. Back it up by stopping Netheron first.
-5. **Ask before** deleting worktrees, revoking devices, changing ports or network access, or running Forecast against anything except its own test copy.
+5. **Ask before** opening a + terminal on the owner's behalf, deleting worktrees, revoking devices, changing ports or network access, or running Forecast against anything except its own test copy.
 6. **Memory pressure.** Each agent is a separate process with a terminal. On a small server, run fewer agents at once and keep an eye on the Resources view.
 
 ## Health checks

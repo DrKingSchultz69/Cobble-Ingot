@@ -11,7 +11,7 @@ process.env.MM_DATA_DIR = dataDir;
 const { openDb } = await import("../src/db.ts");
 const { TaskManager, nextRun } = await import("../src/tasks.ts");
 
-const until = async (fn: () => unknown, ms = 15000) => {
+const until = async (fn: () => unknown, ms = 20_000) => { // generous: a cold first run (antivirus scanning new temp files) is slow
   const end = Date.now() + ms;
   while (Date.now() < end) { if (await fn()) return; await new Promise((r) => setTimeout(r, 100)); }
   throw new Error("timed out waiting");

@@ -5,6 +5,10 @@ One entry per problem. Newest at the top.
 
 | ID | Problem | Status |
 |---|---|---|
+| B-049 | Tests sometimes failed on a cold first run ("timed out waiting") | 🟡 Wait limits raised; watch for it |
+| B-048 | Look menu (and bell) cut off by the sidebar on desktop, behind the page on phones: skins couldn't be picked | ✅ Fixed |
+| B-047 | **+ terminals**: cmd, PowerShell, Claude Code, Codex, OpenCode in a task's folder; "Make it a task"; Netheron terminal colours | 🟡 Built + tested; your manual check pending |
+| B-046 | **Boxy skin**: a variant of Relay with square corners, solid panels, no glow | 🟡 Built + tested; your manual check pending |
 | B-041 | **Shared browser, step 1 of 3**: browser core (real Chrome, own profile, hard blocks, take over/resume) | 🟡 Core built + tested; agent tools and UI next |
 | B-040 | **Wave 3**: hash-anchored edits, LSP-lite diagnostics, Pi / Oh My Pi adapters, web push, remote workers | 🟡 Built + tested; phone/real-agent checks pending |
 | B-039 | **Wave 2 #2–#7**: Budget Dial, shared rules, account profiles, Night Shift + pipelines, Race & Judge, quality watch | 🟡 Built + tested; real agents pending |
@@ -48,6 +52,33 @@ One entry per problem. Newest at the top.
 | B-001 | `npm test` found no tests on Windows | ✅ |
 
 ---
+
+## B-049 — Tests sometimes failed on a cold first run
+- **Found:** 2026-10-20. One `npm test` run failed 4 files, the next 1 test ("timed out waiting"), the third passed.
+- **Why:** timing. The integration tests wait at most 8–15 s for a fake agent through git worktrees and real terminals. Under CPU load (8 busy cores) all 121 still passed in 44–49 s, so the likely cause is a cold first run (antivirus scanning the new temp files). Running two whole suites at once also fails, but only because both use the same headless Chrome; that isn't a real setup.
+- **Options:** (1) raise the wait limits **← chosen**: passing tests are exactly as fast, only a stuck one waits longer before failing; (2) run fewer test files at once (`--test-concurrency=3`): stable but every run 30 s slower; (3) retry failed tests: hides real bugs.
+- **Fix:** `until()` waits up to 20 s in server, terminals, wave1, wave2 and automations tests.
+- **Verified:** 3 normal runs + 2 under CPU load: 121/121 each. Not reproduced cold yet.
+
+## B-048 — Look menu cut off: skins couldn't be picked
+- **Found:** 2026-10-20, while checking Boxy on every screen.
+- **What:** desktop Relay/Boxy: the ⚙ Look menu (and 🔔) open from the sidebar's bottom and are 270–300 px wide; the sidebar scrolls (overflow), so everything past its 236 px edge was clipped, including the Boxy/Calm/Block buttons. Phone: the menu opened *behind* the page, because the glass top bar is its own layer.
+- **Fix:** [skin-relay.css](../apps/web/skin-relay.css): only the nav list scrolls (short windows still work), the sidebar/top bar sits on a higher layer (z-index 30), and its menus are near-solid (a menu inside a glass panel can't blur what's outside it).
+- **Verified:** screenshots at 1440×900, 1280×560 and 390×844, Relay and Boxy.
+
+## B-047 — + terminals and Netheron terminal colours
+- **When:** 2026-10-20. Your choices: a **+** right after the tabs, menu **cmd, PowerShell, Claude Code, Codex, OpenCode**; opens in **the folder of the task you're looking at**; **just a terminal first, can become a task**; **see-through with Netheron colours**. Additions you approved: not a task (no worktree, memory, usage), lives until you close its tab or Netheron stops, project folder when no task is open, a badge per kind, the veil about 80 %, only Relay/Boxy see-through.
+- **Built:**
+  - [terminals.ts](../packages/daemon/src/terminals.ts): plain terminals in memory, separate from tasks. `GET/POST /api/terminals`, `DELETE /api/terminals/:id`. Without a task only a folder Netheron already knows is allowed (it's a shell, so it can't be aimed anywhere on disk). The WebSocket attach / input / resize and `/api/tasks/:id/output` work for both.
+  - **Make it a task** (`POST /api/terminals/:id/task`, Info panel button): the same running program becomes a task (Home, Board, Usage) and keeps its output; nothing restarts. It stays in that folder, no new worktree (like a hand-off). cmd/PowerShell become `shell` tasks. Started bare, it has no shared memory or per-task usage. *Defaults picked overnight for you to review.*
+  - [app.js](../apps/web/app.js): tab badges (`>_` `PS` `C` `X` `O`), ended terminals stay readable (struck-through name, exit code), Info shows folder + task. Tabs now scroll on their own so **+** and Terminal/Code/Split never get pushed off.
+  - Terminal colours: all 16 from the skin's tokens (red accent cursor, theme green/yellow/red/blue); Relay/Boxy leave the background clear over an 80 % veil, so the network shows faintly.
+- **Verified:** [terminals.test.ts](../packages/daemon/test/terminals.test.ts) (4 tests), check-all 51/51, screenshots of cmd and PowerShell in Boxy dark + light.
+
+## B-046 — Boxy skin
+- **When:** 2026-10-20. Your choices: a new skin so you can switch back; a **variant of Relay** (keeps its layout, network, embers, motion); Relay users stay on Relay.
+- **Built:** [skin-boxy.css](../apps/web/skin-boxy.css) (overrides only), ⚙ Look → **Boxy**. Saved as `skin: "boxy"` → `data-skin="relay" data-variant="boxy"`, applied before the first paint.
+- **Verified:** every view at desktop and phone width, dark and light; Relay, Calm and Block unchanged.
 
 ## B-045 — Calmer UI (ADHD-friendly): Home view + 3-step New task
 - **When:** 2026-10-11. Your goal: every feature still there, but not all at once. Your choices: a new **Home** view that opens first and shows only what needs you; New task as steps (**1 What → 2 Who → 3 Extras**). Additions you approved: the list is worked out from live task state (rows leave by themselves), a count on the Home tab, the last agent + model remembered, other views unchanged for now.

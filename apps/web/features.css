@@ -105,3 +105,14 @@
 }
 @media (max-width: 900px) { .sb-res { width: min(460px, calc(100vw - 24px)); } .sb-menu { right: -8px; } }
 .dv-net { margin-bottom: 12px; }
+
+/* ---- "+" new terminal: the button after the tabs and its menu */
+.xt-new { flex: none; align-self: center; width: 28px; height: 28px; padding: 0; margin: 0 4px 4px; font-size: 18px; line-height: 1; display: inline-flex; align-items: center; justify-content: center; }
+.xt-menu { position: fixed; z-index: 60; width: 228px; display: flex; flex-direction: column; gap: 2px; padding: 8px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); animation: pop-in var(--dur-2) var(--ease-out); transform-origin: top left; }
+.xt-menu[hidden] { display: none; }
+.xt-head { font-size: 12px; font-weight: 600; padding: 2px 6px 6px; }
+.xt-menu button { display: flex; align-items: center; gap: 10px; justify-content: flex-start; background: none; border-color: transparent; height: 34px; padding: 0 8px; }
+.xt-menu button:hover:not(:disabled) { background: var(--panel-2); border-color: var(--line); }
+.xt-menu p { margin: 6px 6px 0; }
+.xt-badge { flex: none; min-width: 22px; height: 18px; padding: 0 3px; display: inline-flex; align-items: center; justify-content: center; font: 600 10px/1 var(--mono); color: var(--accent-text, var(--accent)); border: 1px solid var(--line); border-radius: 4px; }
+.xt-tab.ended span:nth-child(2) { color: var(--muted); text-decoration: line-through; }

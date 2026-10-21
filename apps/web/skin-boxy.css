@@ -1,0 +1,44 @@
+/* Boxy: a variant of the Relay skin. Same layout, network, embers and motion; square corners, more solid panels,
+   light blur and faint glow. Only active with <html data-skin="relay" data-variant="boxy"> (pick "Boxy" in Look).
+   Every rule adds [data-variant="boxy"], so it outranks the matching Relay rule without touching skin-relay.css. */
+
+:root[data-skin="relay"][data-variant="boxy"] {
+  --panel: rgba(16, 16, 19, .84);
+  --panel-2: rgba(255, 255, 255, .05);
+  --line: rgba(255, 255, 255, .11);
+  --glass-blur: blur(8px) saturate(120%);
+  --glass-hi: none;
+  --shadow: none;
+  --glow-a: rgba(225, 29, 46, .06);
+  --glow-b: rgba(99, 102, 241, .04);
+  --radius: 0px;
+  --radius-sm: 0px;
+}
+@media (prefers-color-scheme: light) {
+  :root[data-skin="relay"][data-variant="boxy"]:not([data-theme="dark"]) { --panel: rgba(255, 255, 255, .9); --line: rgba(17, 17, 19, .14); --glass-hi: none; --shadow: none; --glow-a: rgba(200, 16, 46, .05); --glow-b: rgba(79, 70, 229, .04); }
+}
+:root[data-skin="relay"][data-variant="boxy"][data-theme="light"] { --panel: rgba(255, 255, 255, .9); --line: rgba(17, 17, 19, .14); --glass-hi: none; --shadow: none; --glow-a: rgba(200, 16, 46, .05); --glow-b: rgba(79, 70, 229, .04); }
+
+/* ---- square everything; tiny status dots get a hair of rounding so they still read as dots, spinners stay round */
+:root[data-variant="boxy"] *, :root[data-variant="boxy"] *::before, :root[data-variant="boxy"] *::after { border-radius: 0 !important; }
+:root[data-variant="boxy"] .dot, :root[data-variant="boxy"] .bell-dot, :root[data-variant="boxy"] .sb-dot,
+:root[data-variant="boxy"] .sb-opt i, :root[data-variant="boxy"] .logo-portal { border-radius: 2px !important; }
+:root[data-variant="boxy"] .spinner { border-radius: 50% !important; }
+
+/* ---- no glows: flat buttons, quiet focus ring, selected things marked with a line instead of a halo */
+:root[data-variant="boxy"] button.primary, :root[data-variant="boxy"] .mtabs .mt-new { box-shadow: none; }
+:root[data-variant="boxy"] input:focus, :root[data-variant="boxy"] select:focus, :root[data-variant="boxy"] textarea:focus { box-shadow: 0 0 0 1px var(--node); }
+:root[data-variant="boxy"] #new-task.composer:focus-within { box-shadow: 0 0 0 1px var(--node); }
+:root[data-variant="boxy"] .seg button.active { box-shadow: inset 0 -2px 0 var(--accent); }
+:root[data-variant="boxy"] .right .subtabs button.active { box-shadow: inset 0 -2px 0 var(--accent); }
+:root[data-variant="boxy"] .home-row.st-idle .home-ic, :root[data-variant="boxy"] .home h2, :root[data-variant="boxy"] .nt-head { text-shadow: none; }
+:root[data-variant="boxy"] .sb-dot.on, :root[data-variant="boxy"] .sb-opt.on i, :root[data-variant="boxy"] .kb-col header i, :root[data-variant="boxy"] .dv-qr svg { box-shadow: none; }
+@media (min-width: 901px) {
+  :root[data-skin="relay"][data-variant="boxy"] body { gap: 8px; padding: 8px; }
+  :root[data-skin="relay"][data-variant="boxy"] .view.active { gap: 8px; }
+  :root[data-skin="relay"][data-variant="boxy"] .views button.active { box-shadow: inset 2px 0 0 var(--accent); }
+  :root[data-skin="relay"][data-variant="boxy"] .statusbar { left: 252px; right: 8px; bottom: 8px; }
+}
+
+/* ---- keep the motion, just quieter: embers dimmer */
+:root[data-variant="boxy"] .nx-embers { opacity: .55; }

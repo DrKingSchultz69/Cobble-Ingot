@@ -142,11 +142,11 @@
 /* ---- desktop: the top bar becomes a floating glass sidebar, views float beside it */
 @media (min-width: 901px) {
   :root[data-skin="relay"] body { flex-direction: row; padding: 12px; gap: 12px; }
-  :root[data-skin="relay"] .top { flex-direction: column; align-items: stretch; width: 236px; flex: none; min-height: 0; padding: 14px 10px 10px; gap: 6px; border-radius: 18px; overflow-y: auto; }
+  :root[data-skin="relay"] .top { flex-direction: column; align-items: stretch; width: 236px; flex: none; min-height: 0; padding: 14px 10px 10px; gap: 6px; border-radius: 18px; overflow: visible; position: relative; z-index: 30; } /* menus (Look, bell) float out over the panels */
   :root[data-skin="relay"] .brand { padding: 2px 8px 12px; gap: 10px; }
   :root[data-skin="relay"] .brand-name { display: flex; flex-direction: column; gap: 4px; font: 700 17px/1 var(--font); letter-spacing: -.02em; }
   :root[data-skin="relay"] .brand-tag { display: block; }
-  :root[data-skin="relay"] .views { flex-direction: column; align-self: stretch; gap: 2px; overflow: visible; }
+  :root[data-skin="relay"] .views { flex-direction: column; align-self: stretch; gap: 2px; overflow: hidden auto; flex: 0 1 auto; min-height: 0; } /* only the nav scrolls on short windows */
   :root[data-skin="relay"] .views button { justify-content: flex-start; gap: 10px; height: 36px; padding: 0 12px; border-radius: 999px; box-shadow: none; font-weight: 500; background: none; border-color: transparent; }
   :root[data-skin="relay"] .views button:hover { background: var(--panel-2); }
   :root[data-skin="relay"] .views button.active { background: var(--panel-2); box-shadow: inset 0 0 0 1px var(--line); }
@@ -247,3 +247,18 @@
 :root[data-skin="relay"] .right .subtabs button.active { background: var(--panel-2); box-shadow: inset 0 0 0 1px var(--line); }
 :root[data-skin="relay"] .diff, :root[data-skin="relay"] #diff pre { border-radius: 12px; }
 :root[data-skin="relay"] .task.open { box-shadow: inset 2px 0 0 var(--accent); background: var(--panel-2); }
+
+/* ---- terminals see the network: the work area drops its blur, each pane gets a dark veil (about 80%) so the
+   lines show faintly and text stays readable; xterm's own background is clear (termTheme in app.js). */
+:root[data-skin="relay"] .ws-main { -webkit-backdrop-filter: none; backdrop-filter: none; background: transparent; }
+:root[data-skin="relay"] .ws-main > .tabs { background: var(--panel); -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur); }
+:root[data-skin="relay"] .pane, :root[data-skin="relay"] .empty-state, :root[data-skin="relay"] .ide { background: color-mix(in srgb, var(--bg) 80%, transparent); }
+:root[data-skin="relay"] .xterm .xterm-viewport { background-color: transparent !important; }
+
+/* ---- "+" new terminal (shared styles in features.css) */
+:root[data-skin="relay"] .xt-menu { background: color-mix(in srgb, var(--bg) 88%, transparent); -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur); }
+:root[data-skin="relay"] .xt-new { border-radius: 999px; }
+/* Sidebar menus float outside the glass sidebar, where their own blur can't reach (nested backdrop): keep them near-solid. */
+:root[data-skin="relay"] .top .bell-menu { background: color-mix(in srgb, var(--bg) 95%, transparent); }
+/* The glass top bar / sidebar is its own layer (backdrop-filter): lift it so its menus open above the views, phone too. */
+:root[data-skin="relay"] .top { position: relative; z-index: 30; }

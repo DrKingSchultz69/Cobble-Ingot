@@ -443,8 +443,34 @@ export class TaskManager extends EventEmitter {
     this.db.prepare("UPDATE tasks SET setup_note = ?, setup_links = ? WHERE id = ?").run(notes.join("; "), JSON.stringify(links), id);
   }
 
+  /**
+   * "Make it a task" (+ terminals): a terminal that is already running becomes a task in place. Same process and
+   * output, nothing restarts. It keeps working in its folder without a new worktree (like a hand-off), so a task's
+   * worktree stays owned by that task. Started bare, it has no shared memory or per-task usage of its own.
+   */
+  adopt(s: PtySession, o: { title: string; agent: string; cwd: string; task?: string }): Task {
+    const owner = o.task ? this.get(o.task) : undefined;
+    const repo = owner?.repo ?? resolve(o.cwd);
+    const agent = (AGENTS as readonly string[]).includes(o.agent) ? o.agent : "shell";
+    const id = `t${Date.now().toString(36)}`;
+    const title = (o.title.trim() || agent).slice(0, 80);
+    const now = Date.now();
+    upsertNode(this.db, { kind: "task", key: id, title, body: "", project: projectKey(repo), data: { agent, model: "", branch: owner?.branch ?? "" } });
+    this.db
+      .prepare(
+        `INSERT INTO tasks (id, title, prompt, agent, model, candidate, category, reason, repo, cwd, branch, worktree, lean, parent, status, created, updated)
+         VALUES (?, ?, '', ?, '', ?, 'code', 'made from a terminal', ?, ?, ?, 0, 0, ?, 'running', ?, ?)`,
+      )
+      .run(id, title, agent, agent, repo, o.cwd, owner?.branch ?? "", owner?.id ?? "", now, now);
+    this.attachSession(id, s);
+    return this.get(id)!;
+  }
+
   private startAgent(id: string, launch: Launch, cwd: string) {
-    const s = spawnPty(id, launch, cwd, {});
+    this.attachSession(id, spawnPty(id, launch, cwd, {}));
+  }
+
+  private attachSession(id: string, s: PtySession) {
     this.sessions.set(id, s);
     s.subscribe(() => {
       const t = this.get(id);

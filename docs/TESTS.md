@@ -258,7 +258,7 @@ Step 2, agent tools (B-043): [browser-agent.test.ts](../packages/daemon/test/bro
 
 ## 12. Full functionality check: [check-all.ts](../scripts/check-all.ts)
 
-One command, `node scripts/check-all.ts`. It starts a throwaway Netheron in a temp folder: the real proxy, server, WebSocket and MCP server, with a fake model API and a fake agent. No quota is used and `~/.mm` is never touched. Every check runs even if one fails. It prints ✔/✖ per check, a total per group, and the failures again at the end. It keeps the temp folder only when something failed. Run 2026-10-11: **49/49, 6 runs in a row clean** (after the B-042 fix to the check).
+One command, `node scripts/check-all.ts`. It starts a throwaway Netheron in a temp folder: the real proxy, server, WebSocket and MCP server, with a fake model API and a fake agent. No quota is used and `~/.mm` is never touched. Every check runs even if one fails. It prints ✔/✖ per check, a total per group, and the failures again at the end. It keeps the temp folder only when something failed. Run 2026-10-11: **49/49, 6 runs in a row clean** (after the B-042 fix to the check). Run 2026-10-20: **51/51** (2 new: + terminal, Make it a task).
 
 | ID | Group | What it checks through the real API | Result |
 |---|---|---|---|
@@ -269,3 +269,15 @@ One command, `node scripts/check-all.ts`. It starts a throwaway Netheron in a te
 | T-ALL-5 | Memory and extras (7) | memory index/record/search/context/tree/node; **MCP server as a real process**: sees the UI's decision, its note shows in the UI, anchored line edit, stale anchor refused, no escape; push key / https-only / last message; remote worker (second real Netheron); shared browser (headless Chrome: blocks, hand to user, resume); preview proxy; project picker + clone refuses `file://` | ✅ |
 
 **Not covered here (manual):** real Claude/Codex output (T-W2-4), push on the phone (T-W3-6), Pi live (T-W3-7), research calls that need the internet, and how the UI looks.
+
+## 13. + terminals (B-047): [terminals.test.ts](../packages/daemon/test/terminals.test.ts)
+
+| ID | What | Checks | Result |
+|---|---|---|---|
+| T-XT-1 | Launch commands | cmd → `cmd.exe`, PowerShell → `powershell.exe -NoLogo` (`pwsh` elsewhere), agents bare | ✅ |
+| T-XT-2 | Open in a task's folder | runs in the task's worktree; typing over the WebSocket; listed as a terminal, never a task; ending keeps the tab with its exit code; closing removes it | ✅ |
+| T-XT-3 | Without a task | known project folder only (other folders 400), unknown kinds 400, missing task 404 | ✅ |
+| T-XT-4 | Make it a task | same process id, output from before kept, input through the task, its ending is the task's ending | ✅ |
+| T-XT-5 | UI, by me in headless Chrome (throwaway server) | + menu names the folder; cmd and PowerShell tabs with badges; Netheron colours in dark and light; network faintly behind; Info → Make it a task; 3 tabs: + and tools stay visible | ✅ 2026-10-20 |
+| T-XT-6 | Manual: real Claude Code / Codex / OpenCode from + | they start in the task's folder, signed in as you | ⏳ you |
+

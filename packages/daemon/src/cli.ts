@@ -39,7 +39,7 @@ switch (cmd) {
     const token = loadToken();
     // The model proxy never leaves localhost: it forwards credentials and has no auth of its own.
     createProxy(db).listen(PORT, HOST, () => console.log(`proxy      http://${HOST}:${PORT}`));
-    const { server, tasks, forecast } = createWorkspaceServer({ db, token, previewPort: PREVIEW_PORT, extend: (api) => mountResearch(api, db) });
+    const { server, tasks, terminals, forecast } = createWorkspaceServer({ db, token, previewPort: PREVIEW_PORT, extend: (api) => mountResearch(api, db) });
     server.listen(UI_PORT, bind, () => {
       console.log(`workspace  http://localhost:${UI_PORT}/?token=${token}`);
       if (lan) {
@@ -49,7 +49,7 @@ switch (cmd) {
     });
     createPreviewServer(token, [PORT, UI_PORT, PREVIEW_PORT]).listen(PREVIEW_PORT, bind, () => console.log(`preview    http://localhost:${PREVIEW_PORT}  (pick a port in the Preview tab)`));
     const shutdown = () => {
-      Promise.all([forecast.dispose(), tasks.dispose()]).finally(() => process.exit(0));
+      Promise.all([forecast.dispose(), tasks.dispose(), terminals.dispose()]).finally(() => process.exit(0));
       setTimeout(() => process.exit(0), 4000).unref(); // never hang on Ctrl+C
     };
     process.on("SIGINT", shutdown);

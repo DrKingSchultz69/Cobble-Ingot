@@ -3,7 +3,7 @@ import { createReadStream, existsSync, readdirSync, statSync } from "node:fs";
 import { createServer, request as httpRequest, type IncomingMessage, type Server } from "node:http";
 import { connect } from "node:net";
 import { homedir } from "node:os";
-import { dirname, extname, join, normalize, resolve, sep } from "node:path";
+import { basename, dirname, extname, join, normalize, resolve, sep } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer, type WebSocket } from "ws";
@@ -31,6 +31,7 @@ import { ResourceMonitor } from "./resources.ts";
 import { agentLimits } from "./sessionlogs.ts";
 import { githubList, githubStatus, linearKey, linearList, setLinearKey } from "./issues.ts";
 import { presetPipeline, TaskManager, type NewTask } from "./tasks.ts";
+import { Terminals } from "./terminals.ts";
 import { cloneRepo, defaultCloneDir, remoteInfo } from "./worktree.ts";
 
 const ROOT = resolve(fileURLToPath(new URL("../../..", import.meta.url)));
@@ -67,9 +68,11 @@ export type ServerOpts = {
   forecastCopy?: StartCopy;
   /** Project Forecast tests and saves step files into (default: this Netheron checkout). */
   forecastRoot?: string;
+  /** Plain "+" terminals (tests pass one that runs a script). */
+  terminals?: Terminals;
 };
 
-export function createWorkspaceServer(o: ServerOpts): { server: Server; tasks: TaskManager; broadcast: (m: unknown) => void; forecast: Forecast } {
+export function createWorkspaceServer(o: ServerOpts): { server: Server; tasks: TaskManager; terminals: Terminals; broadcast: (m: unknown) => void; forecast: Forecast } {
   const { db, token } = o;
   ensureGraphSchema(db);
   ensurePushSchema(db);
@@ -91,6 +94,11 @@ export function createWorkspaceServer(o: ServerOpts): { server: Server; tasks: T
   // Wave 1 live updates: per-task meter, edit guard, checkpoints, queue, alerts.
   for (const ev of ["meter", "guard", "checkpoint", "queue", "verify", "schedule", "race", "quality"]) tasks.on(ev, (x) => broadcast({ t: ev, ...x }));
   tasks.on("alert", (a) => broadcast({ t: "alert", alert: a }));
+  // Plain "+" terminals: not tasks, but they share the WebSocket's attach / input / resize below.
+  const terms = o.terminals ?? new Terminals();
+  terms.on("terminal", (x) => broadcast({ t: "terminal", terminal: x }));
+  terms.on("closed", (id) => broadcast({ t: "terminal-closed", id }));
+  const pty = (id: string) => tasks.session(id) ?? terms.session(id);
 
   // Who is asking: the PC owner (the main key) or a paired phone (its own key, revocable).
   ensureDeviceSchema(db);
@@ -120,6 +128,7 @@ export function createWorkspaceServer(o: ServerOpts): { server: Server; tasks: T
   // --- state / tasks -------------------------------------------------------
   api.get("/api/state", () => ({
     tasks: tasks.list(),
+    terminals: terms.list(),
     availability: detectAvailability(),
     catalog: CATALOG.map(({ id, agent, model, label, auth }) => ({ id, agent, model, label, auth })),
     projects: projects(db),
@@ -407,9 +416,38 @@ export function createWorkspaceServer(o: ServerOpts): { server: Server; tasks: T
     await tasks.remove(params.id, { removeWorktree: query.get("worktree") === "1" });
     return { ok: true };
   });
+  // "+" terminals: open in a task's folder (or a known project folder when no task is open).
+  api.get("/api/terminals", () => ({ terminals: terms.list() }));
+  api.post("/api/terminals", ({ body }) => {
+    const taskId = String(body.task ?? "");
+    let cwd = "";
+    if (taskId) {
+      const t = tasks.get(taskId);
+      if (!t) throw httpError(404, "no such task");
+      cwd = t.cwd;
+    } else {
+      cwd = String(body.folder ?? "");
+      // Only folders Netheron already works in: a "+" terminal is a shell, so it can't be aimed anywhere on disk.
+      if (!projects(db).some((p) => resolve(p) === resolve(cwd || "."))) throw httpError(400, "pick a task or a project folder first");
+    }
+    try { return terms.open(String(body.kind ?? ""), cwd, taskId); } catch (e) { throw httpError(400, (e as Error).message); }
+  });
+  // "Make it a task": the same running program becomes a task (Home, Board, Usage) and keeps its output.
+  api.post("/api/terminals/:tid/task", ({ params, body }) => {
+    const x = terms.list().find((t) => t.id === params.tid);
+    if (!x) throw httpError(404, "no such terminal");
+    if (!x.alive) throw httpError(400, "this terminal has ended; open a new one");
+    const r = terms.release(params.tid)!;
+    const agent = x.kind === "cmd" || x.kind === "powershell" ? "shell" : x.kind;
+    return tasks.adopt(r.s, { title: String(body.title ?? "") || `${x.title} · ${basename(x.cwd)}`, agent, cwd: x.cwd, task: x.task });
+  });
+  api.delete("/api/terminals/:tid", async ({ params }) => {
+    await terms.close(params.tid);
+    return { ok: true };
+  });
   // Plain-text tail of a terminal (no ANSI) — for quick looks from a phone and for tests.
   api.get("/api/tasks/:id/output", ({ params, query }) => {
-    const s = tasks.session(params.id);
+    const s = pty(params.id);
     const text = stripAnsi(s?.buffer() ?? "");
     const n = Number(query.get("tail") ?? 4000);
     return { alive: !!s?.alive, text: text.slice(-n) };
@@ -675,7 +713,7 @@ export function createWorkspaceServer(o: ServerOpts): { server: Server; tasks: T
           ws.send(JSON.stringify({ t: "buffer", id, data: s.buffer() }));
           subs.set(id, s.subscribe((data) => ws.readyState === 1 && ws.send(JSON.stringify({ t: "data", id, data }))));
         };
-        const s = tasks.session(id);
+        const s = pty(id);
         if (s) attach(s);
         else if (tasks.get(id)?.status === "starting") {
           // Setup recipe still running: attach as soon as the agent starts.
@@ -694,7 +732,7 @@ export function createWorkspaceServer(o: ServerOpts): { server: Server; tasks: T
         subs.delete(id);
       } else if (m.t === "input" && typeof m.data === "string") {
         if (me?.kind === "device") (deviceInput.get(me.id) ?? deviceInput.set(me.id, new Map()).get(me.id)!).set(id, Date.now());
-        tasks.write(id, m.data);
+        if (terms.has(id)) terms.write(id, m.data); else tasks.write(id, m.data);
       } else if (m.t === "watch-diff") {
         // One live diff per connection: the task shown in the Diff tab.
         unwatchDiff?.();
@@ -719,7 +757,7 @@ export function createWorkspaceServer(o: ServerOpts): { server: Server; tasks: T
         if (!tasks.get(id)?.browser) return;
         browser().userInput(id, m.input).catch((e) => ws.readyState === 1 && ws.send(JSON.stringify({ t: "browser-error", id, error: (e as Error).message })));
       } else if (m.t === "resize") {
-        tasks.resize(id, Number(m.cols), Number(m.rows));
+        if (terms.has(id)) terms.resize(id, Number(m.cols), Number(m.rows)); else tasks.resize(id, Number(m.cols), Number(m.rows));
       }
     });
     ws.on("close", () => {
@@ -732,7 +770,7 @@ export function createWorkspaceServer(o: ServerOpts): { server: Server; tasks: T
   });
 
   server.on("close", () => { awake.dispose(); void forecast.dispose(); }); // give sleep back, stop any test copy
-  return { server, tasks, broadcast, forecast };
+  return { server, tasks, terminals: terms, broadcast, forecast };
 }
 
 // The browser always loads the newest UI files, but server code only changes on restart.

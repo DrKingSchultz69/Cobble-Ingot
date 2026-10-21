@@ -14,12 +14,14 @@
   <link rel="stylesheet" href="/skin-relay.css">
   <link rel="stylesheet" href="/features.css">
   <link rel="stylesheet" href="/phone.css">
+  <link rel="stylesheet" href="/skin-boxy.css">
   <script>
     // Apply the saved look before the first paint, so the page never flashes the wrong skin.
     try { const p = JSON.parse(localStorage.getItem("mm.prefs") || "{}"), h = document.documentElement;
       // Relay arrived after Calm/Block: switch to it once; picking another skin later sticks.
       if (!p.relay) { p.skin = "relay"; p.relay = 1; localStorage.setItem("mm.prefs", JSON.stringify(p)); }
-      h.dataset.skin = p.skin || "relay"; if (p.theme) h.dataset.theme = p.theme; if (p.motion === "off") h.dataset.motion = "off"; if (p.embers === "off") h.dataset.embers = "off"; } catch {}
+      // Boxy is a variant of Relay: it keeps data-skin="relay" so Relay's layout applies, plus data-variant="boxy".
+      h.dataset.skin = p.skin === "boxy" ? "relay" : p.skin || "relay"; if (p.skin === "boxy") h.dataset.variant = "boxy"; if (p.theme) h.dataset.theme = p.theme; if (p.motion === "off") h.dataset.motion = "off"; if (p.embers === "off") h.dataset.embers = "off"; } catch {}
   </script>
 </head>
 <body>
@@ -67,14 +69,14 @@
         <div id="prefs-menu" class="bell-menu prefs-menu" hidden>
           <div class="card-title">Look</div>
           <div class="pref"><span class="small muted">Skin</span>
-            <div class="seg" data-pref="skin"><button data-v="relay">Relay</button><button data-v="calm">Calm</button><button data-v="block">Block</button></div></div>
+            <div class="seg" data-pref="skin"><button data-v="relay">Relay</button><button data-v="boxy">Boxy</button><button data-v="calm">Calm</button><button data-v="block">Block</button></div></div>
           <div class="pref"><span class="small muted">Colours</span>
             <div class="seg" data-pref="theme"><button data-v="">Auto</button><button data-v="light">Light</button><button data-v="dark">Dark</button></div></div>
           <div class="pref"><span class="small muted">Motion</span>
             <div class="seg" data-pref="motion"><button data-v="">On</button><button data-v="off">Off (calm)</button></div></div>
           <div class="pref"><span class="small muted">Embers</span>
             <div class="seg" data-pref="embers"><button data-v="">On</button><button data-v="off">Off</button></div></div>
-          <p class="muted small">Relay is glass over a living network, with Nether embers. Block is a blocky, pixel look. Same buttons and words, different paint. Motion off stops every animation.</p>
+          <p class="muted small">Relay is glass over a living network, with Nether embers. Boxy is Relay with square corners and less glow. Block is a blocky, pixel look. Same buttons and words, different paint. Motion off stops every animation.</p>
         </div>
       </div>
       <span id="conn" class="dot" title="connection"></span>
@@ -278,6 +280,15 @@
 
     <main class="ws-main">
       <div class="tabs" id="tabs"></div>
+      <div class="xt-menu" id="xt-menu" role="menu" hidden>
+        <div class="xt-head">New terminal <span class="muted" id="xt-where"></span></div>
+        <button data-kind="cmd" role="menuitem"><span class="xt-badge">&gt;_</span>cmd</button>
+        <button data-kind="powershell" role="menuitem"><span class="xt-badge">PS</span>PowerShell</button>
+        <button data-kind="claude" role="menuitem"><span class="xt-badge">C</span>Claude Code</button>
+        <button data-kind="codex" role="menuitem"><span class="xt-badge">X</span>Codex</button>
+        <button data-kind="opencode" role="menuitem"><span class="xt-badge">O</span>OpenCode</button>
+        <p class="muted small">A plain terminal, not a task: no worktree, memory or usage tracking. Closing its tab ends it.</p>
+      </div>
       <div class="panes" id="panes"><div class="empty-state" id="ws-empty">
         <h2>No task open</h2>
         <p>Describe a task on the left. The router picks the agent and model, gives it its own git worktree and shared memory.</p>

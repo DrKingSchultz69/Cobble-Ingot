@@ -57,6 +57,7 @@ const S = {
   split: store.get("split", false),
   focus: 0,
   terms: new Map(),
+  xt: new Map(), // "+" terminals (not tasks): id -> { id, kind, title, cwd, task, alive, exit_code }
   rightTab: "info",
   previewPort: 4143,
   ws: null,
@@ -81,13 +82,24 @@ function showView(v) {
 // ---------------------------------------------------------------- look: skin, colours, motion (⚙)
 // index.html applies the saved look before the first paint; this keeps the menu, terminals and editor in step.
 const isLight = () => { const t = document.documentElement.dataset.theme; return t ? t === "light" : matchMedia("(prefers-color-scheme: light)").matches; };
+// Terminal colours come from the skin's tokens, so command output (errors, success, folders) matches Netheron.
+// Relay (and its Boxy variant) leaves the background clear: the pane's veil lets the network show faintly behind.
 function termTheme() {
-  const cs = getComputedStyle(document.documentElement), v = (n) => cs.getPropertyValue(n).trim();
-  return { background: v("--bg") || "#0f1115", foreground: v("--text"), cursor: v("--text"), selectionBackground: v("--line") };
+  const h = document.documentElement, cs = getComputedStyle(h), v = (n, d) => cs.getPropertyValue(n).trim() || d;
+  const light = isLight(), relay = h.dataset.skin === "relay";
+  const red = v("--accent-text", v("--bad")), hot = v("--accent-hot", red), green = v("--ok"), yellow = v("--warn"), blue = v("--idle"), pink = v("--bad");
+  const cyan = light ? "#0e7490" : "#4fd1ff", black = light ? "#3a3a40" : "#2b2b30", grey = v("--node", v("--muted"));
+  return {
+    background: relay ? "rgba(0, 0, 0, 0)" : v("--bg", "#0f1115"), foreground: v("--text"),
+    cursor: v("--accent", v("--text")), cursorAccent: v("--bg", "#0f1115"), selectionBackground: v("--accent-wash", v("--line")),
+    black, red, green, yellow, blue, magenta: pink, cyan, white: v("--muted"),
+    brightBlack: grey, brightRed: hot, brightGreen: green, brightYellow: yellow, brightBlue: blue, brightMagenta: pink, brightCyan: cyan, brightWhite: v("--text"),
+  };
 }
 function applyPrefs(p = store.get("prefs", {})) {
   const h = document.documentElement;
-  h.dataset.skin = p.skin || "relay";
+  h.dataset.skin = p.skin === "boxy" ? "relay" : p.skin || "relay"; // Boxy is a variant of Relay
+  if (p.skin === "boxy") h.dataset.variant = "boxy"; else delete h.dataset.variant;
   if (p.theme) h.dataset.theme = p.theme; else delete h.dataset.theme;
   if (p.motion === "off") h.dataset.motion = "off"; else delete h.dataset.motion;
   if (p.embers === "off") h.dataset.embers = "off"; else delete h.dataset.embers;
@@ -342,6 +354,13 @@ function connect() {
     } else if (m.t === "diff") {
       showDiff(m);
       codeOnDiff(m);
+    } else if (m.t === "terminal") {
+      S.xt.set(m.terminal.id, m.terminal);
+      renderTabs();
+      if (S.panes[S.focus] === m.terminal.id) { renderInfo(); syncPaneHeads(); }
+    } else if (m.t === "terminal-closed") {
+      S.xt.delete(m.id);
+      closeTab(m.id);
     } else if (m.t === "removed") {
       S.tasks.delete(m.id);
       dropTaskState(m.id);
@@ -739,12 +758,14 @@ function persistLayout() {
   store.set("split", S.split);
 }
 function renderTabs() {
-  const tabs = S.open.filter((id) => S.tasks.has(id)).map((id) => {
+  const tabs = S.open.filter(openable).map((id) => {
+    const x = S.xt.get(id);
+    if (x) return `<div class="tab xt-tab ${S.panes[S.focus] === id ? "active" : ""} ${x.alive ? "" : "ended"}" data-id="${id}" title="${esc(x.title)} · ${esc(x.cwd)}">${xtBadge(x.kind)}<span>${esc(x.title)} · ${esc(projName(x.cwd))}</span><span class="x" data-close="${id}">×</span></div>`;
     const t = S.tasks.get(id);
     return `<div class="tab ${S.panes[S.focus] === id ? "active" : ""}" data-id="${id}">${dot(t.status)}<span>${esc(t.title.slice(0, 28))}</span><span class="x" data-close="${id}">×</span></div>`;
   });
   const code = S.mode === "code";
-  $("#tabs").innerHTML = tabs.join("") + `<div class="tab-tools">
+  $("#tabs").innerHTML = `<div class="tab-list">${tabs.join("")}</div>` + `<button class="xt-new" id="xt-new" title="New terminal in this task's folder" aria-label="New terminal" aria-haspopup="true">+</button><div class="tab-tools">
     <button class="side-toggle only-desktop ${sideHidden("side") ? "" : "on"}" data-side="side" title="Show / hide the task list">◧</button>
     <div class="seg"><button data-mode="term" class="${code ? "" : "active"}">Terminal</button><button data-mode="code" class="${code ? "active" : ""}">Code</button></div>
     ${code ? "" : `<button id="split-btn" title="Split view">${S.split ? "Single" : "Split"}</button>`}
@@ -757,7 +778,8 @@ function renderTabs() {
 }
 $("#tabs").onclick = (e) => {
   const x = e.target.dataset.close;
-  if (x) return closeTab(x);
+  if (x) return S.xt.has(x) ? endTerminal(x) : closeTab(x);
+  if (e.target.closest("#xt-new")) return e.stopPropagation(), toggleXtMenu();
   const tab = e.target.closest(".tab");
   if (tab) openTask(tab.dataset.id);
 };
@@ -769,7 +791,7 @@ function renderPanes() {
   $("#ide").hidden = !ide;
   if (ide) return requestAnimationFrame(fitAll);
   host.classList.toggle("split", S.split);
-  const ids = (S.split ? S.panes : [S.panes[0] ?? S.panes[1]]).map((id) => (id && S.tasks.has(id) ? id : null));
+  const ids = (S.split ? S.panes : [S.panes[0] ?? S.panes[1]]).map((id) => (id && openable(id) ? id : null));
   if (!S.split && !S.panes[0] && S.panes[1]) { S.panes[0] = S.panes[1]; S.panes[1] = null; }
   $("#ws-empty").hidden = ids.some(Boolean);
   $$(".pane", host).forEach((p) => p.remove());
@@ -777,13 +799,82 @@ function renderPanes() {
     if (!id && !S.split) return;
     const pane = document.createElement("div");
     pane.className = "pane";
-    const t = id && S.tasks.get(id);
-    pane.innerHTML = `<div class="pane-head ${i === S.focus ? "focus" : ""}"><span>${t ? esc(`${t.agent} · ${t.title}`) : "Empty pane — open a task"}</span><span class="meter" data-meter="${id || ""}">${id ? meterText(S.meters.get(id)) : ""}</span><span>${t ? esc(t.branch || "") : ""}</span></div>`;
+    pane.innerHTML = paneHead(id, i);
     pane.onmousedown = () => { if (S.focus !== i) { S.focus = i; renderTabs(); renderInfo(); syncRight(); $$(".pane-head").forEach((h, j) => h.classList.toggle("focus", j === i)); } };
     if (id) pane.append(termFor(id).el);
     host.append(pane);
   });
   requestAnimationFrame(fitAll);
+}
+
+// "+" terminals share tabs, panes and xterm with tasks; these helpers tell the two apart.
+const openable = (id) => S.tasks.has(id) || S.xt.has(id);
+const XT_KINDS = [["cmd", "cmd", ">_"], ["powershell", "PowerShell", "PS"], ["claude", "Claude Code", "C"], ["codex", "Codex", "X"], ["opencode", "OpenCode", "O"]];
+const xtBadge = (kind) => `<span class="xt-badge">${esc((XT_KINDS.find((k) => k[0] === kind) ?? [, , "?"])[2])}</span>`;
+function paneHead(id, i) {
+  const x = id && S.xt.get(id), t = id && S.tasks.get(id);
+  if (x) return `<div class="pane-head ${i === S.focus ? "focus" : ""}"><span>${esc(x.title)} · terminal${x.alive ? "" : ` · ended${x.exit_code != null ? ` (exit ${x.exit_code})` : ""}`}</span><span></span><span>${esc(x.cwd)}</span></div>`;
+  return `<div class="pane-head ${i === S.focus ? "focus" : ""}"><span>${t ? esc(`${t.agent} · ${t.title}`) : "Empty pane — open a task"}</span><span class="meter" data-meter="${id || ""}">${id ? meterText(S.meters.get(id)) : ""}</span><span>${t ? esc(t.branch || "") : ""}</span></div>`;
+}
+function syncPaneHeads() {
+  $$("#panes .pane").forEach((p, i) => {
+    const id = S.split ? S.panes[i] : S.panes[0] ?? S.panes[1];
+    if (S.xt.has(id)) p.querySelector(".pane-head").outerHTML = paneHead(id, S.split ? i : S.focus);
+  });
+}
+// Where "+" opens: the focused task's folder, a focused terminal's own folder, else the current project.
+function xtTarget() {
+  const id = S.panes[S.focus], t = S.tasks.get(id), x = S.xt.get(id);
+  if (t) return { body: { task: t.id }, where: t.cwd };
+  if (x) return { body: x.task && S.tasks.has(x.task) ? { task: x.task } : { folder: x.cwd }, where: x.cwd };
+  return S.project ? { body: { folder: S.project }, where: S.project } : null;
+}
+function toggleXtMenu() {
+  const m = $("#xt-menu"), b = $("#xt-new");
+  if (!m.hidden) return (m.hidden = true);
+  const tg = xtTarget();
+  $("#xt-where").textContent = tg ? `in ${projName(tg.where)}` : "Pick a project first";
+  $$("#xt-menu [data-kind]").forEach((k) => (k.disabled = !tg));
+  const r = b.getBoundingClientRect();
+  m.style.left = `${Math.max(8, Math.min(r.left, innerWidth - 236))}px`;
+  m.style.top = `${r.bottom + 6}px`;
+  m.hidden = false;
+}
+$("#xt-menu").onclick = async (e) => {
+  e.stopPropagation();
+  const k = e.target.closest("[data-kind]");
+  if (!k) return;
+  $("#xt-menu").hidden = true;
+  const tg = xtTarget();
+  if (!tg) return toast("Pick a project folder first.", "bad");
+  try {
+    const x = await api("/api/terminals", { body: { kind: k.dataset.kind, ...tg.body } });
+    S.xt.set(x.id, x);
+    showView("workspace");
+    openTask(x.id);
+  } catch (err) { toast(err.message, "bad"); }
+};
+document.addEventListener("click", () => ($("#xt-menu").hidden = true));
+function xtInfoWire(x) {
+  const b = $("#xt-task");
+  if (!b) return;
+  b.onclick = async () => {
+    b.disabled = true;
+    try {
+      const t = await api(`/api/terminals/${x.id}/task`, { body: { title: $("#xt-title").value.trim() } });
+      S.tasks.set(t.id, t);
+      S.xt.delete(x.id);
+      closeTab(x.id);
+      openTask(t.id);
+      toast(`"${t.title}" is now a task.`, "ok");
+    } catch (err) { b.disabled = false; toast(err.message, "bad"); }
+  };
+}
+// Closing a "+" terminal's tab ends it (it isn't a task, so there's nothing to come back to).
+async function endTerminal(id) {
+  try { await api(`/api/terminals/${id}`, { method: "DELETE" }); } catch {}
+  S.xt.delete(id);
+  closeTab(id);
 }
 
 function termFor(id) {
@@ -796,6 +887,7 @@ function termFor(id) {
     fontSize: matchMedia("(max-width: 900px)").matches ? 12 : 13,
     cursorBlink: true,
     scrollback: 10000,
+    allowTransparency: true, // Relay's clear background (termTheme)
     theme: termTheme(),
   });
   const fit = new FitAddon.FitAddon();
@@ -943,6 +1035,11 @@ function current() { return S.tasks.get(S.panes[S.focus]); }
 function renderInfo() {
   renderBrowserBar();
   const t = current();
+  const x = S.xt.get(S.panes[S.focus]);
+  if (x) return ($("#info").innerHTML = `<h3>${esc(x.title)}</h3><dl class="kv"><dt>Kind</dt><dd>Terminal (not a task)</dd><dt>Status</dt><dd class="s-${x.alive ? "running" : "done"}">${x.alive ? "running" : `ended${x.exit_code != null ? ` (exit ${x.exit_code})` : ""}`}</dd><dt>Folder</dt><dd>${esc(x.cwd)}</dd>${x.task && S.tasks.has(x.task) ? `<dt>Task</dt><dd>${esc(S.tasks.get(x.task).title)}</dd>` : ""}</dl>
+    ${x.alive ? `<div class="row"><input id="xt-title" placeholder="Task name (optional)" value=""><button id="xt-task" class="primary">Make it a task</button></div>
+    <p class="muted small">The same program keeps running and keeps its output; it then shows on Home, the Board and Usage. It stays in this folder (no new worktree).</p>` : ""}
+    <p class="muted small">Closing its tab ends it.</p>`, xtInfoWire(x));
   if (!t) return ($("#info").innerHTML = `<p class="muted">Select a task.</p>`);
   const age = Math.round((Date.now() - t.created) / 60000);
   $("#info").innerHTML = `
@@ -2132,8 +2229,9 @@ async function boot() {
   S.previewPort = st.previewPort ?? 4143;
   if (!S.project && st.projects[0]) S.project = st.projects[0];
   for (const t of st.tasks) S.tasks.set(t.id, t);
-  S.open = S.open.filter((id) => S.tasks.has(id));
-  S.panes = S.panes.map((id) => (id && S.tasks.has(id) ? id : null));
+  for (const x of st.terminals ?? []) S.xt.set(x.id, x);
+  S.open = S.open.filter(openable);
+  S.panes = S.panes.map((id) => (id && openable(id) ? id : null));
   renderProjects();
   loadRemote();
   loadProfiles();

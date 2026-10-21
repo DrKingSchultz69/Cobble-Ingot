@@ -24,6 +24,7 @@ const { createProxy } = await import(src("daemon/src/proxy.ts"));
 const { UPSTREAMS } = await import(src("daemon/src/config.ts"));
 const { createWorkspaceServer, createPreviewServer } = await import(src("daemon/src/server.ts"));
 const { TaskManager, WATCH } = await import(src("daemon/src/tasks.ts"));
+const { Terminals } = await import(src("daemon/src/terminals.ts"));
 const { SharedBrowser, BrowserBlocked, findChrome } = await import(src("daemon/src/browser.ts"));
 const MCP_BIN = fileURLToPath(new URL("../packages/memory/bin/mcp.ts", import.meta.url));
 
@@ -133,7 +134,9 @@ const tasks = new TaskManager(db, {
   },
   home: HOME, idleMs: 700, tickMs: 150, availability: AVAIL,
 });
-const { server } = createWorkspaceServer({ db, token: TOKEN, tasks, previewPort: 0 });
+// "+" terminals run the same fake agent instead of cmd / PowerShell / a real CLI.
+const terminals = new Terminals(() => ({ cmd: process.execPath, args: [AGENT], env: {} }));
+const { server } = createWorkspaceServer({ db, token: TOKEN, tasks, terminals, previewPort: 0 });
 const base = await listen(server);
 const wsUrl = base.replace("http", "ws") + "/ws";
 
@@ -391,6 +394,39 @@ await check("remove with worktree: task gone, folder deleted, main checkout unto
   await until(() => !existsSync(E.cwd), "worktree folder removed");
   assert.equal(readFileSync(join(REPO, ".env"), "utf8"), "SECRET=1\n");
   assert.equal(JSON.parse(readFileSync(join(HOME, ".claude.json"), "utf8")).projects[E.cwd], undefined, "trust entry removed");
+});
+
+await check("+ terminal: opens in the task's folder, not a task, typing works, closing ends it", async () => {
+  const r = await post("/api/terminals", { kind: "powershell", task: A.id });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  const x = r.body;
+  assert.equal(x.cwd, A.cwd);
+  const st = await state();
+  assert.ok(st.terminals.some((t: any) => t.id === x.id) && !st.tasks.some((t: any) => t.id === x.id));
+  await until(async () => (await j(`/api/tasks/${x.id}/output`)).body.text.includes("fake agent ready"), "terminal greeting");
+  const ws = new WebSocket(wsUrl, { headers: { cookie: `mm_token=${TOKEN}` } });
+  let out = "";
+  ws.on("message", (raw) => { const m = JSON.parse(String(raw)); if (m.id === x.id && (m.t === "data" || m.t === "buffer")) out += m.data; });
+  await new Promise((res) => ws.once("open", res));
+  ws.send(JSON.stringify({ t: "attach", id: x.id }));
+  ws.send(JSON.stringify({ t: "input", id: x.id, data: "dir\r" }));
+  await until(() => out.includes("got:dir"), "typed text echoed");
+  ws.close();
+  assert.equal((await del(`/api/terminals/${x.id}`)).status, 200);
+  assert.ok(!(await state()).terminals.some((t: any) => t.id === x.id));
+  assert.equal((await post("/api/terminals", { kind: "cmd", folder: tmpdir() })).status, 400, "only known project folders");
+});
+await check("+ terminal → Make it a task: same process and output, shows as a task", async () => {
+  const x = (await post("/api/terminals", { kind: "claude", folder: REPO })).body;
+  await until(async () => (await j(`/api/tasks/${x.id}/output`)).body.text.includes("fake agent ready"), "terminal greeting");
+  const r = await post(`/api/terminals/${x.id}/task`, { title: "smoke adopted" });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.equal(r.body.agent, "claude");
+  assert.equal((await task(r.body.id)).title, "smoke adopted");
+  assert.match(await output(r.body.id), /fake agent ready/);
+  await post(`/api/tasks/${r.body.id}/input`, { data: "still here\r" });
+  await sees(r.body.id, /got:still here/);
+  await del(`/api/tasks/${r.body.id}`);
 });
 
 // =========================================================================================================
@@ -684,6 +720,7 @@ await check("project picker: folders listed, git + remote detected, bad path 400
 // =========================================================================================================
 live.close();
 await tasks.dispose();
+await terminals.dispose();
 for (const s of [server, proxy, upstream]) { s.closeAllConnections(); s.close(); }
 const failed = results.filter((r) => !r.ok);
 const skipped = results.filter((r) => r.skipped);

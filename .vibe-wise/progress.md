@@ -92,3 +92,14 @@ Build checkpoint (stage: awaiting reasoning). Learner's own decisions: Netheron 
 ## Built: v3 look + Netheron.exe (2026-10-14)
 - UI matched to Stitch "Netheron v3 · Final": underlined tabs, line icons, bundled Geist + JetBrains Mono (apps/web/fonts, OFL), Home header/rows/Running list/centred empty state, Workspace task rows.
 - `npm run build:exe` -> dist/Netheron/ (Netheron.exe tray launcher + runtime/node.exe + app/) and dist/Netheron-win-x64.zip. Launcher source: scripts/launcher/Netheron.cs (compiled with Windows csc). Log: %USERPROFILE%\.mm\netheron.log.
+
+## Built: Boxy skin (2026-10-20)
+Learner's decisions: the boxy look is a new skin so they can switch back; it is a variant of Relay (keeps Relay's layout, network, embers, motion); existing Relay users stay on Relay. AI-proposed details, confirmed via Implementation checkpoint: pref skin="boxy" maps to data-skin="relay" + data-variant="boxy"; overrides only in apps/web/skin-boxy.css; Boxy button in the Look menu. Verified: 117/117 tests; screenshots of Boxy and Relay at desktop and phone width on a throwaway copy (ports 6141-6143). Not committed yet.
+
+## Overnight run (2026-10-20): learner asked for autonomous work, checkpoints skipped for that night
+Learner: "this night is your over night plan all the task to do, and testing and make the completely finished product in the morning i will do the mannual testing". Treated as an explicit request for direct implementation for that run only; learning mode stays active.
+- Built: + terminals step 1 (learner's decisions + approved additions, see Implementation checkpoint) and the terminal theme (see-through + Netheron colours).
+- Built with AI-picked defaults (NOT learner decisions, review pending): "Make it a task" adopts the running process, same folder, no worktree, no memory; button in Info.
+- Fixed: Look menu clipped / behind page (B-048); test wait limits raised (B-049); tabs scroll on their own.
+- Verified: npm test 121/121, check-all 51/51, screenshots every view. Exe rebuilt. Not committed. Manual list: docs/MANUAL-CHECK-2026-10-20.md.
+- Still pending learner decisions: council, sessions hub, phone access, task rename, mobile app (try PWA first).

@@ -59,7 +59,7 @@ after(async () => {
 const api = (path: string, init: RequestInit = {}) =>
   fetch(base + path, { ...init, headers: { authorization: `Bearer ${TOKEN}`, "content-type": "application/json", ...(init.headers ?? {}) } });
 
-const until = async (fn: () => Promise<boolean> | boolean, ms = 8000) => {
+const until = async (fn: () => Promise<boolean> | boolean, ms = 20_000) => { // generous: a cold first run (antivirus scanning new temp files) is slow
   const end = Date.now() + ms;
   while (Date.now() < end) {
     if (await fn()) return;
